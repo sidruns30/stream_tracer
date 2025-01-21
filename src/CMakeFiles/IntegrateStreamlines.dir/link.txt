@@ -1,1 +1,0 @@
-/opt/homebrew/opt/llvm/bin/clang++ -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX14.4.sdk -bundle -Wl,-headerpad_max_install_names -Xlinker -undefined -Xlinker dynamic_lookup -o IntegrateStreamlines.cpython-311-darwin.so CMakeFiles/IntegrateStreamlines.dir/integrate_streamlines.cpp.o  /opt/homebrew/Cellar/llvm/18.1.8/lib/libomp.dylib
