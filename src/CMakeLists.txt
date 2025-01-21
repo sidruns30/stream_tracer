@@ -5,7 +5,14 @@ find_package(Python 3.7 COMPONENTS Interpreter Development REQUIRED)
 # Find OpenMP
 find_package(OpenMP REQUIRED)
 
-pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp grid.hpp interpolation.hpp)
+# Add the header files into a variable
+set(HEADERS grid.hpp interpolation.hpp display.hpp)
+
+# Bind them using pybind
+pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp ${HEADERS})
+
+#pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp grid.hpp 
+#                    interpolation.hpp)
 target_link_libraries(IntegrateStreamlines PRIVATE OpenMP::OpenMP_CXX)
 install(TARGETS IntegrateStreamlines DESTINATION .)
 

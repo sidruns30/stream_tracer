@@ -5,6 +5,7 @@
 #include <iostream>
 #include "grid.hpp"
 #include "interpolation.hpp"
+#include "display.hpp"
 
 
 namespace py                = pybind11;
@@ -19,16 +20,16 @@ void TakeStep(py::array_t<T> &myFieldx,
               py::array_t<T> &myGridx,
               py::array_t<T> &myGridy,
               py::array_t<T> &myGridz,
-              std::vector <std::size_t> &indices_x,
-              std::vector <std::size_t> &indices_y,
-              std::vector <std::size_t> &indices_z,
+              std::vector <std::size_t> &indicesx,
+              std::vector <std::size_t> &indicesy,
+              std::vector <std::size_t> &indicesz,
               py::array_t<T> &Posx,
               py::array_t<T> &Posy,
               py::array_t<T> &Posz,
               const bool isMonotonic, const bool isUniform,
               const std::vector<bool> &should_terminate)
 {
-    const std::size_t Npoints  = indices_x.size();
+    const std::size_t Npoints  = indicesx.size();
     auto myFieldxRef           = myFieldx.template unchecked<3>();
     auto myFieldyRef           = myFieldy.template unchecked<3>();
     auto myFieldzRef           = myFieldz.template unchecked<3>();
@@ -48,11 +49,11 @@ void TakeStep(py::array_t<T> &myFieldx,
     auto interpFieldyRef       = interpFieldy.template mutable_unchecked<1>();
     auto interpFieldzRef       = interpFieldz.template mutable_unchecked<1>();
 
-    interpolate::InterpolateField(Posx, Posy, Posz, indices_x, indices_y, indices_z,
+    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
                      myGridx, myGridy, myGridz, myFieldx, isUniform, interpFieldx);
-    interpolate::InterpolateField(Posx, Posy, Posz, indices_x, indices_y, indices_z,
+    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
                      myGridx, myGridy, myGridz, myFieldy, isUniform, interpFieldy);
-    interpolate::InterpolateField(Posx, Posy, Posz, indices_x, indices_y, indices_z,
+    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
                      myGridx, myGridy, myGridz, myFieldz, isUniform, interpFieldz);
 
     // Estimate the first step size along the streamline
@@ -60,16 +61,31 @@ void TakeStep(py::array_t<T> &myFieldx,
     auto dy                    = myGridyRef(1) - myGridyRef(0);
     auto dz                    = myGridzRef(1) - myGridzRef(0);
     auto step_size             = std::min({dx, dy, dz});
-
     // Take a step along the streamline
     #pragma omp parallel for schedule(dynamic)
     for (std::size_t i=0; i<Npoints; i++)
     {
         if (should_terminate[i])
         {   continue;   }
-            PosxRef(i) += interpFieldxRef(i) * step_size;
-            PosyRef(i) += interpFieldyRef(i) * step_size;
-            PoszRef(i) += interpFieldzRef(i) * step_size;
+            auto norm        = sqrt(interpFieldxRef(i)*interpFieldxRef(i)
+                                + interpFieldyRef(i)*interpFieldyRef(i)
+                                + interpFieldzRef(i)*interpFieldzRef(i));
+
+            PosxRef(i) += interpFieldxRef(i) * step_size / norm;
+            PosyRef(i) += interpFieldyRef(i) * step_size / norm;
+            PoszRef(i) += interpFieldzRef(i) * step_size / norm;
+    }
+    if (isUniform)
+    {
+        ReturnClosestIndexUniform(Posx, indicesx, myGridx);
+        ReturnClosestIndexUniform(Posy, indicesy, myGridy);
+        ReturnClosestIndexUniform(Posz, indicesz, myGridz);
+    }
+    else
+    {
+        ReturnClosestIndexMonotonic(Posx, indicesx, myGridx);
+        ReturnClosestIndexMonotonic(Posy, indicesy, myGridy);
+        ReturnClosestIndexMonotonic(Posz, indicesz, myGridz);
     }
     return;
 }
@@ -94,6 +110,9 @@ py::array_t<T> IntegrateAllStreamlines(
     auto Npoints                = Posx.shape(0);
     bool isMonotonic            = true;
     bool isUniform              = true;
+    auto Nsteps_display         = Nsteps / 10;
+    auto DisplayObject          = DisplayTerminal<T>(Nsteps, "Integrating Streamlines", 
+                                                     Nsteps_display);
     
     // Initial Checks to make sure that the input dimensions are consistent
     {
@@ -181,14 +200,15 @@ py::array_t<T> IntegrateAllStreamlines(
                 out_ref(2, outindex, j) = Poszref(j);
             }
         }
+
         TakeStep(   myFieldx, myFieldy, myFieldz, myGridx, myGridy, myGridz,
                     indicesx, indicesy, indicesz, Posx, Posy, Posz, isMonotonic, isUniform, 
                     should_terminate);
         TerminationCondition(   should_terminate, Posx, Posy, Posz, 
                                 indicesx, indicesy, indicesz,
                                 xmin, xmax, ymin, ymax, zmin, zmax);
-        
- 
+        DisplayObject.UpdateProgress(1);
+        DisplayObject.DisplayProgress();
     }
     return streamline_output;
 }

@@ -120,7 +120,7 @@
         float dx                    = gridRef(1) - gridRef(0);
         #pragma omp parallel for schedule(static)
         for (std::size_t i=0; i<Npoints; i++)
-        {   indices[i] = std::min(  static_cast<std::size_t>(xkRef(i) / dx),
+        {   indices[i] = std::min(  static_cast<std::size_t>((xkRef(i) - gridRef(0)) / dx),
                                     static_cast<std::size_t>(Ngrid - 2));
         }
         return;
@@ -160,22 +160,4 @@
         }
         return;
     }
-
-    // Declare all template arguments
-    //template std::tuple<bool, bool> CheckIfUniform<float>(  py::array_t<float> &myGridx,
-    //                                                        py::array_t<float> &myGridy,
-    //                                                        py::array_t<float> &myGridz);
-    //template void ReturnClosestIndexMonotonic<float>(py::array_t<float> &xk, std::vector <std::size_t> &indices,
-    //                                                    py::array_t<float> &myGrid1D);
-    //template void ReturnClosestIndexUniform<float>(  py::array_t<float> &xk, std::vector <std::size_t> &indices,
-    //                                                py::array_t<float> &myGrid1D);
-    //template void TerminationCondition<float>(  std::vector<bool> &should_terminate, const py::array_t<float> &Posx1,
-    //                                            const py::array_t<float> &Posx2, const py::array_t<float> &Posx3,
-    //                                            const std::vector<std::size_t> &indices_x1,
-    //                                            const std::vector<std::size_t> &indices_x2,
-    //                                            const std::vector<std::size_t> &indices_x3,
-    //                                            const float x1min, const float x1max,
-    //                                            const float x2min, const float x2max,
-    //                                            const float x3min, const float x3max);
-
 #endif

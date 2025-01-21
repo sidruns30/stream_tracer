@@ -17,20 +17,77 @@
     class DisplayTerminal
     {   
         public:
-            DisplayTerminal(T current_progresss,
-                            T total_progress,
+            DisplayTerminal(T complete_progress,
+                            std::string taskName,
                             T progress_threshold) : 
-                            current_progress(current_progress),
-                            total_progress(total_progress),
-                            progress_threshold(progress_threshold);
-            void UpdateProgress(T progress_increment)
+                            current_progress(0),
+                            complete_progress(complete_progress),
+                            taskName(taskName),
+                            progress_threshold(progress_threshold),
+                            last_displayed_progress (0.),
+                            start_time(std::chrono::high_resolution_clock::now()) {};
+            DisplayTerminal(T complete_progress,
+                            std::string taskName): 
+                            current_progress(0),
+                            complete_progress(complete_progress),
+                            taskName(taskName),
+                            progress_threshold(complete_progress / 20.),
+                            last_displayed_progress (0.),
+                            start_time(std::chrono::high_resolution_clock::now()) {};
+
+            void UpdateProgress(T progress_increment);
             void DisplayProgress();
             ~DisplayTerminal() = default;
         private:
             T current_progress;
-            T total_progress;
+            T complete_progress;
             T progress_increment;
             T progress_threshold;
-    };
+            T last_displayed_progress;
+            decltype(std::chrono::high_resolution_clock::now()) start_time;
+            std::string taskName;
+    };;
+
+    template <typename T>
+    void DisplayTerminal<T>::UpdateProgress(T progress_increment)
+    {
+        current_progress += progress_increment;
+        return;
+    }
+
+    /*
+        Display the progress on the terminal via *
+        An extra * is added every time the progress exceeds the threshold
+        <Task Name>: Expected finish time: %d seconds
+        ******************-------------------------- [N% Complete]
+                         ^ Current Progress        ^ Complete Progress
+    */
+    template <typename T>
+    void DisplayTerminal<T>::DisplayProgress()
+    {
+        if (current_progress - last_displayed_progress < progress_threshold)
+        {   return;}
+        auto current_time = std::chrono::high_resolution_clock::now();
+        auto elapsed_time = std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - start_time).count();
+        
+        // Print start time
+        auto expected_time = static_cast<float> ( 1.e-9 * elapsed_time * (complete_progress / current_progress));
+        auto time_remaining = expected_time - 1.e-9 * elapsed_time;
+
+        T progress = current_progress / complete_progress;
+        auto n_chars = complete_progress / progress_threshold;
+        auto n_chars_star = current_progress / progress_threshold;
+        auto n_chars_dash = n_chars - n_chars_star;
+        auto progress_percent = progress * 100;
+        std::cout << taskName << ": Expected time remaining: " << time_remaining << " seconds" << std::endl;
+        std::cout << "[";
+        for (auto i=0; i<n_chars_star; i++)
+        {   std::cout << "*";   }
+        for (auto i=0; i<n_chars_dash; i++)
+        {   std::cout << "-";   }
+        std::cout << "] \t (" << progress_percent << "% Complete)" << std::endl;
+        last_displayed_progress = current_progress;
+        return;
+    }
 
 #endif
