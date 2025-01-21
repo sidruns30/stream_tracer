@@ -1,0 +1,2 @@
+/usr/bin/ar qc libintegrate_streamlines_lib.a CMakeFiles/integrate_streamlines_lib.dir/integrate_streamlines.cpp.o
+/opt/homebrew/opt/llvm/bin/llvm-ranlib libintegrate_streamlines_lib.a
