@@ -110,15 +110,15 @@ py::array_t<T> IntegrateAllStreamlines(
     auto Npoints                = Posx.shape(0);
     bool isMonotonic            = true;
     bool isUniform              = true;
-    auto Nsteps_display         = Nsteps / 10;
+    auto Nsteps_display         = Nsteps / 20;
     auto DisplayObject          = DisplayTerminal<T>(Nsteps, "Integrating Streamlines", 
                                                      Nsteps_display);
     
     // Initial Checks to make sure that the input dimensions are consistent
     {
         auto Nx                    = myFieldx.shape(0);
-        auto Ny                    = myFieldy.shape(0);
-        auto Nz                    = myFieldz.shape(0);
+        auto Ny                    = myFieldx.shape(1);
+        auto Nz                    = myFieldx.shape(2);
         bool shapeMatch             = true;
         for (auto i=0; i<3; i++)
         {
