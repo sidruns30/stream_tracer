@@ -23,6 +23,89 @@
         const std::string reset = "\033[0m";
     }
 
+    struct Timer
+{
+        Timer(const std::string& label) :   time_begin(std::chrono::high_resolution_clock::now()), 
+                                            label(label), total_time_elapsed(0.), 
+                                            time_since_checkpoint(0.) {}
+        void Reset()
+        {
+            time_begin = std::chrono::high_resolution_clock::now();
+            total_time_elapsed = 0.;
+            time_since_checkpoint = 0.;
+            return;
+        }
+        void Checkpoint()
+        {
+            auto current_time = std::chrono::high_resolution_clock::now();
+            time_since_checkpoint = std::chrono::duration_cast<std::chrono::duration<double>>(current_time - elapsed_checkpoint).count();
+            total_time_elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(current_time - time_begin).count();
+            elapsed_checkpoint = std::chrono::high_resolution_clock::now();
+            return;
+        }
+        std::string GetLabel() const
+        {
+            return label;
+        }
+        double GetTotalTimeElapsed() const
+        {
+            return total_time_elapsed;
+        }
+        double GetTimeSinceCheckpoint() const
+        {
+            return time_since_checkpoint;
+        }
+        std::string label;
+        std::chrono::time_point<std::chrono::high_resolution_clock> time_begin;
+        decltype(std::chrono::high_resolution_clock::now()) elapsed_checkpoint;
+        double total_time_elapsed;
+        double time_since_checkpoint;
+};
+
+/*
+    * Global timer class to store all timers
+*/
+class Timers
+{
+    public:
+        Timers(std::size_t current_iteration,
+               std::size_t n_iterations) :
+               current_iteration(current_iteration),
+               n_iterations(n_iterations) {};
+        void AddTimer(const Timer& timer)
+        {
+            timers.push_back(timer);
+        }
+        void Checkpoint()
+        {
+            for (auto& timer : timers)
+            {
+                timer.Checkpoint();
+            }
+        }
+
+        void PrintTimers()
+        {
+            double total = 0.;
+            for (auto& timer : timers)
+            {
+                total += timer.total_time_elapsed;
+            }
+            for (auto& timer : timers)
+            {
+                std::cout << colors::blue << timer.GetLabel() << colors::reset << " fraction: "
+                          << colors::green << 100*timer.total_time_elapsed/total << colors::reset << std::endl;
+            }
+            std::cout << colors::blue << "Total time elapsed: " << colors::reset << total << std::endl;
+        }
+
+
+    private:
+        std::vector<Timer> timers;
+        std::size_t current_iteration;
+        std::size_t n_iterations;
+};
+
     template <typename T>
     class DisplayTerminal
     {   

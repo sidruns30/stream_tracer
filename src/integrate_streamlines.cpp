@@ -26,7 +26,7 @@ void TakeStep(py::array_t<T> &myFieldx,
               py::array_t<T> &Posx,
               py::array_t<T> &Posy,
               py::array_t<T> &Posz,
-              const bool isMonotonic, const bool isUniform,
+              const std::string &coordinateSystem, const bool isUniform,
               const std::vector<bool> &should_terminate)
 {
     const std::size_t Npoints  = indicesx.size();
@@ -50,11 +50,11 @@ void TakeStep(py::array_t<T> &myFieldx,
     auto interpFieldzRef       = interpFieldz.template mutable_unchecked<1>();
 
     interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldx, isUniform, interpFieldx);
+                     myGridx, myGridy, myGridz, myFieldx, interpFieldx, coordinateSystem);
     interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldy, isUniform, interpFieldy);
+                     myGridx, myGridy, myGridz, myFieldy, interpFieldy, coordinateSystem);
     interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldz, isUniform, interpFieldz);
+                     myGridx, myGridy, myGridz, myFieldz, interpFieldz, coordinateSystem);
 
     // Estimate the first step size along the streamline
     auto dx                    = myGridxRef(1) - myGridxRef(0);
@@ -202,7 +202,7 @@ py::array_t<T> IntegrateAllStreamlines(
         }
 
         TakeStep(   myFieldx, myFieldy, myFieldz, myGridx, myGridy, myGridz,
-                    indicesx, indicesy, indicesz, Posx, Posy, Posz, isMonotonic, isUniform, 
+                    indicesx, indicesy, indicesz, Posx, Posy, Posz, coordinateSystem, isUniform, 
                     should_terminate);
         TerminationCondition(   should_terminate, Posx, Posy, Posz, 
                                 indicesx, indicesy, indicesz,
