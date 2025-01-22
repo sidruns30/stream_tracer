@@ -11,7 +11,17 @@
     # include <chrono>
     # include <thread>
 
-    
+    namespace colors
+    {
+        const std::string red = "\033[1;31m";
+        const std::string green = "\033[1;32m";
+        const std::string yellow = "\033[1;33m";
+        const std::string blue = "\033[1;34m";
+        const std::string magenta = "\033[1;35m";
+        const std::string cyan = "\033[1;36m";
+        const std::string white = "\033[1;37m";
+        const std::string reset = "\033[0m";
+    }
 
     template <typename T>
     class DisplayTerminal
@@ -79,12 +89,16 @@
         auto n_chars_star = current_progress / progress_threshold;
         auto n_chars_dash = n_chars - n_chars_star;
         auto progress_percent = progress * 100;
-        std::cout << taskName << ": Expected time remaining: " << time_remaining << " seconds" << std::endl;
+        std::cout << colors::blue << taskName << colors::reset << ": Expected time remaining: " << time_remaining << " seconds" << std::endl;
+        std::cout << colors::green << "Progress: " << colors::reset;
         std::cout << "[";
+        std::cout << colors::yellow;
         for (auto i=0; i<n_chars_star; i++)
         {   std::cout << "*";   }
+        std::cout << colors::red;
         for (auto i=0; i<n_chars_dash; i++)
         {   std::cout << "-";   }
+        std::cout << colors::reset;
         std::cout << "] \t (" << progress_percent << "% Complete)" << std::endl;
         last_displayed_progress = current_progress;
         return;
