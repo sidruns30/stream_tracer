@@ -11,93 +11,198 @@
 #ifndef GRID_HPP_
     #define GRID_HPP_
 
-    #include <pybind11/pybind11.h>
-    #include <pybind11/numpy.h>
-    #include <tuple>
-    #include <stdlib.h>
-    #include <iostream>
+    #include "global.hpp"
 
     namespace py                = pybind11;
 
     /*
         Function to check if the grid is monotonic and  
         uniform
+        The grid is deemed to be uniform if |1 - dx0 / dxi| < 0.01
         Returns a tuple of two booleans (isMonotonic, isUniform)
     */
     template <typename T>
-    std::tuple<bool, bool> CheckIfUniform(  py::array_t<T> &myGridx,
-                                            py::array_t<T> &myGridy,
-                                            py::array_t<T> &myGridz)
+    std::tuple<bool, bool> CheckIfUniform(  std::tuple<py::array_t<T>, py::array_t<T>, py::array_t<T>> &grid)
     {
         bool isMonotonic            = true;
         bool isUniform              = true;
-        auto gridxRef               = myGridx.template unchecked<1>();
-        auto gridyRef               = myGridy.template unchecked<1>();
-        auto gridzRef               = myGridz.template unchecked<1>();
-        const std::size_t ny        = gridyRef.shape(0);
-        const std::size_t nx        = gridxRef.shape(0);
-        const std::size_t nz        = gridzRef.shape(0);
-        if (nx < 2 || ny < 2 || nz < 2)
+        auto gridx1                 = std::get<0>(grid);
+        auto gridx2                 = std::get<1>(grid);
+        auto gridx3                 = std::get<2>(grid);
+        auto gridx1Ref              = gridx1.template unchecked<1>();
+        auto gridx2Ref              = gridx2.template unchecked<1>();
+        auto gridx3Ref              = gridx3.template unchecked<1>();
+        const std::size_t nx1       = gridx1.shape(0);
+        const std::size_t nx2       = gridx2.shape(0);
+        const std::size_t nx3       = gridx3.shape(0);
+        if (nx1 < 2 || nx2 < 2 || nx3 < 2)
         {   throw std::invalid_argument("Each dimension must have at least 2 cells");}
 
-        float dx                    = gridxRef(1) - gridxRef(0);
-        float dy                    = gridyRef(1) - gridyRef(0);
-        float dz                    = gridzRef(1) - gridzRef(0);
-        std::cout << "dx = " << dx << " dy = " << dy << " dz = " << dz << std::endl;
+        auto dx1                   = gridx1Ref(1) - gridx1Ref(0);
+        auto dx2                   = gridx2Ref(1) - gridx2Ref(0);
+        auto dx3                   = gridx3Ref(1) - gridx3Ref(0);
         // Check x array
-        for (std::size_t ix=0; ix<nx-1; ix++)
+        for (std::size_t ix1=0; ix1<nx1-1; ix1++)
         {
-            if ((fabs(1 - (gridxRef(ix+1) - gridxRef(ix))/dx) > 0.01))
+            if ((fabs(1 - (gridx1Ref(ix1+1) - gridx1Ref(ix1))/dx1) > relative_precision))
             {   isUniform           = false;    }
-            if (gridxRef(ix+1) <= gridxRef(ix))
+            if (gridx1Ref(ix1+1) <= gridx1Ref(ix1))
             {   isMonotonic         = false;    
             }
         }
         // Check y array
-        for (std::size_t iy=0; iy<ny-1; iy++)
+        for (std::size_t ix2=0; ix2<nx2-1; ix2++)
         {
-            if ((fabs(1 - (gridyRef(iy+1) - gridyRef(iy))/dy) > 0.01))
+            if ((fabs(1 - (gridx2Ref(ix2+1) - gridx2Ref(ix2))/dx2) > relative_precision))
             {   isUniform           = false;    }
-            if (gridyRef(iy+1) <= gridyRef(iy))
+            if (gridx2Ref(ix2+1) <= gridx2Ref(ix2))
             {   isMonotonic         = false;    
             }
         }
         // Check z array
-        for (std::size_t iz=0; iz<nz-1; iz++)
+        for (std::size_t ix3=0; ix3<nx3-1; ix3++)
         {
-            if ((fabs(1 - (gridzRef(iz+1) - gridzRef(iz))/dz) > 0.01))
+            if ((fabs(1 - (gridx3Ref(ix3+1) - gridx3Ref(ix3))/dx3) > relative_precision))
             {   isUniform           = false;    }
-            if (gridzRef(iz+1) <= gridzRef(iz))
+            if (gridx3Ref(ix3+1) <= gridx3Ref(ix3))
             {   isMonotonic         = false;    
             }
         }
+        if (isUniform)
+        {   std::cout << "Grid is uniform to within 1%" << std::endl;    }
         return std::make_tuple( isMonotonic, isUniform);
+    }
+
+    /*
+        Out of bounds error
+    */
+    class OutOfBoundsError : public std::exception
+    {
+        public:
+            OutOfBoundsError(const std::string &message) : message(message) {}
+            virtual const char* what() const throw()
+            {   return message.c_str(); }
+        private:
+            std::string message;
+    };
+
+    /*
+        Ensure that all the points lie within the grid
+    */
+    template <typename T>
+    void CheckBounds(   py::array_t<T> &points,
+                        std::tuple<py::array_t<T>, py::array_t<T>, py::array_t<T>> &grid,
+                        std::vector <bool> &should_terminate,
+                        const bool raise_out_of_bounds_error)
+    {
+        auto pointsRef              = points.template unchecked<2>();
+        const auto Npoints          = points.shape(1);
+        auto gridx1                 = std::get<0>(grid);
+        auto gridx2                 = std::get<1>(grid);
+        auto gridx3                 = std::get<2>(grid);
+        auto gridx1Ref              = gridx1.template unchecked<1>();
+        auto gridx2Ref              = gridx2.template unchecked<1>();
+        auto gridx3Ref              = gridx3.template unchecked<1>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<Npoints; i++)
+        {
+            if (pointsRef(0, i) < gridx1Ref(1) || pointsRef(0, i) > gridx1Ref(gridx1.shape(0)-2) ||
+                pointsRef(1, i) < gridx2Ref(1) || pointsRef(1, i) > gridx2Ref(gridx2.shape(0)-2) ||
+                pointsRef(2, i) < gridx3Ref(1) || pointsRef(2, i) > gridx3Ref(gridx3.shape(0)-2))
+            {   
+                should_terminate[i] = true; 
+                if (raise_out_of_bounds_error)
+                {   // Print point coordinates and grid limits
+                    std::cout << "Point coordinates: " << pointsRef(0, i) << ", " << pointsRef(1, i) << ", " << pointsRef(2, i) << std::endl;
+                    std::cout << "x1 min: " << gridx1Ref(0) << ", x1 max: " << gridx1Ref(gridx1.shape(0)-1) << std::endl;
+                    std::cout << "x2 min: " << gridx2Ref(0) << ", x2 max: " << gridx2Ref(gridx2.shape(0)-1) << std::endl;
+                    std::cout << "x3 min: " << gridx3Ref(0) << ", x3 max: " << gridx3Ref(gridx3.shape(0)-1) << std::endl;
+                    auto message = "Point " + std::to_string(i) + " is out of bounds";
+                    throw OutOfBoundsError(message);
+                }
+            }
+        }
+        return;
+    }
+
+    /*
+        Count and print the number of streamlines terminated
+    */
+   float PercentTerminate(std::vector<bool> &should_terminate)
+    {
+        const auto Npoints          = should_terminate.size();
+        std::size_t count            = 0;
+        for (std::size_t i=0; i<Npoints; i++)
+        {
+            if (should_terminate[i])
+            {   count++;    }
+        }
+        return count / Npoints;
     }
 
 
     /*
-        Find the nearest cell in the grid that is greater than or equal
-        to xd[j] for a monotonically increasing 1D grid, for all j's
+        Find the nearest cell in the grid that is less than 
+        xd[j] for a monotonically increasing 1D grid, for all j's
         <---><---><--->...<--->...<--->
     i =  0     1    2      k        n
                             ^xd[j]
                             -> return k
     */
     template <typename T>
-    void ReturnClosestIndexMonotonic(py::array_t<T> &xk, std::vector <std::size_t> &indices,
-                                     py::array_t<T> &myGrid1D)
+    void ReturnClosestIndexMonotonic(   py::array_t<T> &points, 
+                                        py::array_t<std::size_t> &indices_of_points,
+                                        std::tuple<py::array_t<T>, py::array_t<T>, py::array_t<T>> &grid)
     {
-        auto gridRef                = myGrid1D.template unchecked<1>();
-        auto xkRef                  = xk.template unchecked<1>();
-        const std::size_t Npoints   = xkRef.shape(0);
-        const std::size_t Ngrid     = gridRef.shape(0);
-        #pragma omp parallel for schedule(dynamic)
+        auto indicesRef             = indices_of_points.template mutable_unchecked<2>();
+        auto pointsRef              = points.template unchecked<2>();
+        const auto Npoints          = points.shape(1);
+        auto gridx1                 = std::get<0>(grid);
+        auto gridx2                 = std::get<1>(grid);
+        auto gridx3                 = std::get<2>(grid);
+        auto gridx1Ref              = gridx1.template unchecked<1>();
+        auto gridx2Ref              = gridx2.template unchecked<1>();
+        auto gridx3Ref              = gridx3.template unchecked<1>();
+
+        #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
         for (std::size_t i=0; i<Npoints; i++)
         {
-            std::size_t index = 0;
-            while(gridRef(index) <= xkRef(i) || index < Ngrid-2)
-            {   index++;    }
-            indices[i] = std::max(index - 1, static_cast<std::size_t>(0));
+            // Start with x1
+            std::size_t left = 0;
+            std::size_t right = gridx1.shape(0) - 1;
+            while (left < right)
+            {
+                std::size_t mid = left + (right - left) / 2;
+                if (gridx1Ref(mid) <= pointsRef(0, i))
+                {   left = mid + 1; }
+                else
+                {   right = mid;    }
+            }
+            indicesRef(0, i) = left - 1;
+            // x2
+            left = 0;
+            right = gridx2.shape(0) - 1;
+            while (left < right)
+            {
+                std::size_t mid = left + (right - left) / 2;
+                if (gridx2Ref(mid) <= pointsRef(1, i))
+                {   left = mid + 1; }
+                else
+                {   right = mid;    }
+            }
+            indicesRef(1, i) = left - 1;
+            // x3
+            left = 0;
+            right = gridx3.shape(0) - 1;
+            while (left < right)
+            {
+                std::size_t mid = left + (right - left) / 2;
+                if (gridx3Ref(mid) <= pointsRef(2, i))
+                {   left = mid + 1; }
+                else
+                {   right = mid;    }
+            }
+            indicesRef(2, i) = left - 1;
         }
         return;
     }
@@ -110,54 +215,33 @@
                             ^xk[j]
     */
    template <typename T>
-   void ReturnClosestIndexUniform( py::array_t<T> &xk, std::vector <std::size_t> &indices,
-                                    py::array_t<T> &myGrid1D)
+   void ReturnClosestIndexUniform(  py::array_t<T> &points, 
+                                    py::array_t<std::size_t> &indices_of_points,
+                                    std::tuple<py::array_t<T>, py::array_t<T>, py::array_t<T>> &grid)
     {
-        auto gridRef                = myGrid1D.template unchecked<1>();
-        auto xkRef                  = xk.template unchecked<1>();
-        const std::size_t Npoints   = xkRef.shape(0);
-        const std::size_t Ngrid     = gridRef.shape(0);
-        float dx                    = gridRef(1) - gridRef(0);
-        #pragma omp parallel for schedule(static)
-        for (std::size_t i=0; i<Npoints; i++)
-        {   indices[i] = std::min(  static_cast<std::size_t>((xkRef(i) - gridRef(0)) / dx),
-                                    static_cast<std::size_t>(Ngrid - 2));
-        }
-        return;
-    }
-
-    /*
-        Condition to check if the streamline has left the grid
-    */
-    template <typename T>
-    void TerminationCondition(  std::vector<bool> &should_terminate, const py::array_t<T> &Posx1,
-                                const py::array_t<T> &Posx2, const py::array_t<T> &Posx3,
-                                const std::vector<std::size_t> &indices_x1,
-                                const std::vector<std::size_t> &indices_x2,
-                                const std::vector<std::size_t> &indices_x3,
-                                const T x1min, const T x1max,
-                                const T x2min, const T x2max,
-                                const T x3min, const T x3max)
-    {
-        auto posx1_ref             = Posx1.template unchecked<1>();
-        auto posx2_ref             = Posx2.template unchecked<1>();
-        auto posx3_ref             = Posx3.template unchecked<1>();
-        const auto Npoints = posx1_ref.shape(0);
-        #pragma omp parallel for schedule(static)
+        auto indicesRef             = indices_of_points.template mutable_unchecked<2>();
+        auto pointsRef              = points.template unchecked<2>();
+        const auto Npoints          = points.shape(1);
+        auto gridx1                 = std::get<0>(grid);
+        auto gridx2                 = std::get<1>(grid);
+        auto gridx3                 = std::get<2>(grid);
+        auto gridx1Ref              = gridx1.template unchecked<1>();
+        auto gridx2Ref              = gridx2.template unchecked<1>();
+        auto gridx3Ref              = gridx3.template unchecked<1>();
+        const auto dx1              = gridx1Ref(1) - gridx1Ref(0);
+        const auto dx2              = gridx2Ref(1) - gridx2Ref(0);
+        const auto dx3              = gridx3Ref(1) - gridx3Ref(0);
+        #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
         for (std::size_t i=0; i<Npoints; i++)
         {
-            if (should_terminate[i])
-            {   continue;   }
-
-            if (posx1_ref(i) < x1min || posx1_ref(i) > x1max ||
-                posx2_ref(i) < x2min || posx2_ref(i) > x2max ||
-                posx3_ref(i) < x3min || posx3_ref(i) > x3max ||
-                indices_x1[i] == 0 || indices_x2[i] == 0 || indices_x3[i] == 0 ||
-                indices_x1[i] == indices_x1.size()-1 ||
-                indices_x2[i] == indices_x2.size()-1 ||
-                indices_x3[i] == indices_x3.size()-1)
-            {   should_terminate[i] = true;    }
+            indicesRef(0, i) = std::min( static_cast<std::size_t>((pointsRef(0, i) - gridx1Ref(0)) / dx1),
+                                                    static_cast<std::size_t>(gridx1.shape(0) - 2));
+            indicesRef(1, i) = std::min( static_cast<std::size_t>((pointsRef(1, i) - gridx2Ref(0)) / dx2),
+                                                    static_cast<std::size_t>(gridx2.shape(0) - 2));
+            indicesRef(2, i) = std::min( static_cast<std::size_t>((pointsRef(2, i) - gridx3Ref(0)) / dx3),
+                                                    static_cast<std::size_t>(gridx3.shape(0) - 2));
         }
         return;
     }
+
 #endif

@@ -6,89 +6,148 @@
 #ifndef COORDINATES_HPP_
     #define COORDINATES_HPP_
 
-    #include <omp.h>
-    #include <vector>
+    #include "global.hpp"
+    #include <pybind11/pybind11.h>
+    #include <pybind11/numpy.h>
+    namespace py = pybind11;
+    
 
     template <typename T>
-    void SphericalToCartesianCoords(std::vector<T> &r, 
-                                    std::vector<T> &theta,
-                                    std::vector<T> &phi,
-                                    std::vector<T> &x,
-                                    std::vector<T> &y,
-                                    std::vector<T> &z)
+    void SphericalToCartesianCoords(py::array_t<T> &points_spherical,
+                                    py::array_t<T> &points_cartesian)
     {
-        #pragma omp parallel for schedule(static)
-        for (std::size_t i=0; i<r.size(); i++)
+        auto points_sphericalRef    = points_spherical.template unchecked<2>();
+        auto points_cartesianRef    = points_cartesian.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_cartesian.shape(1); i++)
         {
-            x[i] = r[i] * sin(theta[i]) * cos(phi[i]);
-            y[i] = r[i] * sin(theta[i]) * sin(phi[i]);
-            z[i] = r[i] * cos(theta[i]);
+            points_cartesianRef(0, i) = points_sphericalRef(0, i) * sin(points_sphericalRef(1, i)) * 
+                                        cos(points_sphericalRef(2, i));
+            points_cartesianRef(1, i) = points_sphericalRef(0, i) * sin(points_sphericalRef(1, i)) * 
+                                        sin(points_sphericalRef(2, i));
+            points_cartesianRef(2, i) = points_sphericalRef(0, i) * cos(points_sphericalRef(1, i));
         }
         return;
     }
 
     template <typename T>
-    void CartesianToSphericalCoords(std::vector<T> &x,
-                                    std::vector<T> &y,
-                                    std::vector<T> &z,
-                                    std::vector<T> &r,
-                                    std::vector<T> &theta,
-                                    std::vector<T> &phi)
+    void CartesianToSphericalCoords(py::array_t<T> &points_cartesian,
+                                    py::array_t<T> &points_spherical)
     {
-        #pragma omp parallel for schedule(static)
-        for (std::size_t i=0; i<r.size(); i++)
+        auto points_cartesianRef    = points_cartesian.template unchecked<2>();
+        auto points_sphericalRef    = points_spherical.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_spherical.shape(1); i++)
         {
-            r[i] = sqrt(x[i]*x[i] + y[i]*y[i] + z[i]*z[i]);
-            theta[i] = acos(z[i] / r[i]);
-            phi[i] = atan2(y[i], x[i]);
+            points_sphericalRef(0, i) = sqrt(square(points_cartesianRef(0, i)) +
+                                        square(points_cartesianRef(1, i)) +
+                                        square(points_cartesianRef(2, i)));
+            points_sphericalRef(1, i) = acos(points_cartesianRef(2, i) / points_sphericalRef(0, i));
+            points_sphericalRef(2, i) = atan2(points_cartesianRef(1, i), points_cartesianRef(0, i));
         }
         return;
     }
 
     template <typename T>
-    void SphericalToCartesianField(std::vector<T> &r, 
-                                    std::vector<T> &theta,
-                                    std::vector<T> &phi,
-                                    std::vector<T> &Br,
-                                    std::vector<T> &Btheta,
-                                    std::vector<T> &Bphi,
-                                    std::vector<T> &Bx,
-                                    std::vector<T> &By,
-                                    std::vector<T> &Bz)
+    void SphericalToLogSphericalCoords(py::array_t<T> &points_spherical,
+                                    py::array_t<T> &points_log_spherical)
     {
-        #pragma omp parallel for schedule(static)
-        for (std::size_t i=0; i<r.size(); i++)
+        auto points_sphericalRef    = points_spherical.template unchecked<2>();
+        auto points_log_sphericalRef    = points_log_spherical.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_log_spherical.shape(1); i++)
         {
-            Bx[i] = Br[i] * sin(theta[i]) * cos(phi[i]) + 
-                    Btheta[i] * cos(theta[i]) * cos(phi[i]) - 
-                    Bphi[i] * sin(phi[i]);
-            By[i] = Br[i] * sin(theta[i]) * sin(phi[i]) + 
-                    Btheta[i] * cos(theta[i]) * sin(phi[i]) + 
-                    Bphi[i] * cos(phi[i]);
-            Bz[i] = Br[i] * cos(theta[i]) - Btheta[i] * sin(theta[i]);
+            points_log_sphericalRef(0, i) = log(points_sphericalRef(0, i));
+            points_log_sphericalRef(1, i) = points_sphericalRef(1, i);
+            points_log_sphericalRef(2, i) = points_sphericalRef(2, i);
         }
         return;
     }
 
     template <typename T>
-    void CartesianToSphericalField(std::vector<T> &x,
-                                    std::vector<T> &y,
-                                    std::vector<T> &z,
-                                    std::vector<T> &Bx,
-                                    std::vector<T> &By,
-                                    std::vector<T> &Bz,
-                                    std::vector<T> &Br,
-                                    std::vector<T> &Btheta,
-                                    std::vector<T> &Bphi)
+    void LogSphericalToSphericalCoords(py::array_t<T> &points_log_spherical,
+                                        py::array_t<T> &points_spherical)
     {
-        #pragma omp parallel for schedule(static)
-        for (std::size_t i=0; i<x.size(); i++)
+        auto points_log_sphericalRef    = points_log_spherical.template unchecked<2>();
+        auto points_sphericalRef    = points_spherical.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_spherical.shape(1); i++)
         {
-            Br[i] = x[i] * Bx[i] + y[i] * By[i] + z[i] * Bz[i];
-            Btheta[i] = (x[i] * Bx[i] + y[i] * By[i] + z[i] * Bz[i]) / sqrt(x[i]*x[i] + y[i]*y[i] + z[i]*z[i]);
-            Bphi[i] = (x[i] * By[i] - y[i] * Bx[i]) / (x[i]*x[i] + y[i]*y[i]);
+            points_sphericalRef(0, i) = exp(points_log_sphericalRef(0, i));
+            points_sphericalRef(1, i) = points_log_sphericalRef(1, i);
+            points_sphericalRef(2, i) = points_log_sphericalRef(2, i);
         }
         return;
+    }
+
+    template <typename T>
+    void CartesianToLogSphericalCoords( py::array_t<T> &points_cartesian,
+                                        py::array_t<T> &points_log_spherical)
+    {
+        auto points_cartesianRef            = points_cartesian.template unchecked<2>();
+        auto points_log_sphericalRef        = points_log_spherical.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_log_spherical.shape(1); i++)
+        {
+            auto r                          = sqrt( square(points_cartesianRef(0, i)) + 
+                                                square(points_cartesianRef(1, i)) +
+                                                square(points_cartesianRef(2, i)));
+            points_log_sphericalRef(0, i)   = log(r);
+            points_log_sphericalRef(1, i)   = acos(points_cartesianRef(2, i) / r);
+            points_log_sphericalRef(2, i)   = atan2(points_cartesianRef(1, i), points_cartesianRef(0, i));
+        }
+        return;
+    }
+
+
+    template <typename T>
+    void LogSphericalToCartesianCoords(py::array_t<T> &points_log_spherical,
+                                        py::array_t<T> &points_cartesian)
+    {
+        auto points_log_sphericalRef    = points_log_spherical.template unchecked<2>();
+        auto points_cartesianRef        = points_cartesian.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<points_cartesian.shape(1); i++)
+        {
+            points_cartesianRef(0, i) = exp(points_log_sphericalRef(0, i)) * sin(points_log_sphericalRef(1, i)) * 
+                                        cos(points_log_sphericalRef(2, i));
+            points_cartesianRef(1, i) = exp(points_log_sphericalRef(0, i)) * sin(points_log_sphericalRef(1, i)) * 
+                                        sin(points_log_sphericalRef(2, i));
+            points_cartesianRef(2, i) = exp(points_log_sphericalRef(0, i)) * cos(points_log_sphericalRef(1, i));
+        }
+        return;
+    }
+
+
+    /*
+        Input array points has shape (3, Npoints)
+    */
+    template <typename T>
+    py::array_t<T> ConvertCoordiantes(py::array_t<T> &points,
+                                      std::string from,
+                                      std::string to)
+    {
+        auto pointsRef              = points.template mutable_unchecked<2>();
+        const std::size_t Npoints   = points.shape(1);
+        auto new_points             = py::array_t<T>({3, static_cast<int>(Npoints)});
+        if (from == "cartesian" && to == "spherical")
+        {   CartesianToSphericalCoords(points, new_points);   }
+        else if (from == "spherical" && to == "cartesian")
+        {   SphericalToCartesianCoords(points, new_points);   }
+        else if (from == "spherical" && to == "log_spherical")
+        {   SphericalToLogSphericalCoords(points, new_points);   }
+        else if (from == "log_spherical" && to == "spherical")
+        {   LogSphericalToSphericalCoords(points, new_points);   }
+        else if (from == "cartesian" && to == "log_spherical")
+        {   CartesianToLogSphericalCoords(points, new_points);   }
+        else if (from == "log_spherical" && to == "cartesian")
+        {   LogSphericalToCartesianCoords(points, new_points);   }
+        else
+        {
+            throw std::invalid_argument(
+                "Invalid point coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
+        }
+        return new_points;
     }
 
 

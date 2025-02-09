@@ -6,17 +6,15 @@ find_package(Python 3.7 COMPONENTS Interpreter Development REQUIRED)
 find_package(OpenMP REQUIRED)
 
 # Add the header files into a variable
-set(HEADERS grid.hpp interpolation.hpp display.hpp)
+set(HEADERS grid.hpp interpolation.hpp display.hpp coordinates.hpp adaptive_stepsize.hpp indices.hpp)
 
 # Bind them using pybind
 pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp ${HEADERS})
 
-#pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp grid.hpp 
-#                    interpolation.hpp)
 target_link_libraries(IntegrateStreamlines PRIVATE OpenMP::OpenMP_CXX)
 install(TARGETS IntegrateStreamlines DESTINATION .)
 
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -fopenmp -fPIC")
 
 #add_library(grid_lib grid.hpp)
 #add_library(field_lib fields.hpp)

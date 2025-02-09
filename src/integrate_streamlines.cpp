@@ -1,11 +1,10 @@
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-#include <exception>
-#include <tuple>
-#include <iostream>
+#include "global.hpp"
 #include "grid.hpp"
 #include "interpolation.hpp"
 #include "display.hpp"
+#include "coordinates.hpp"
+#include "adaptive_stepsize.hpp"
+#include "indices.hpp"
 
 
 namespace py                = pybind11;
@@ -14,78 +13,104 @@ namespace py                = pybind11;
     Function to integrate along a streamline for a single step
 */
 template <typename T>
-void TakeStep(py::array_t<T> &myFieldx,
-              py::array_t<T> &myFieldy,
-              py::array_t<T> &myFieldz,
-              py::array_t<T> &myGridx,
-              py::array_t<T> &myGridy,
-              py::array_t<T> &myGridz,
-              std::vector <std::size_t> &indicesx,
-              std::vector <std::size_t> &indicesy,
-              std::vector <std::size_t> &indicesz,
-              py::array_t<T> &Posx,
-              py::array_t<T> &Posy,
-              py::array_t<T> &Posz,
-              const std::string &coordinateSystem, const bool isUniform,
-              const std::vector<bool> &should_terminate)
+void TakeStep(  py::array_t<T> &points,
+                py::array_t<T> &field,
+                std::tuple<py::array_t<T>, py::array_t<T>, py::array_t<T>> &grid,
+                py::array_t<std::size_t> &indices,
+                std::vector<bool> &should_terminate,
+                std::string grid_coord_system,
+                const bool use_adaptive_stepsize,
+                Timers &timers)
 {
-    const std::size_t Npoints  = indicesx.size();
-    auto myFieldxRef           = myFieldx.template unchecked<3>();
-    auto myFieldyRef           = myFieldy.template unchecked<3>();
-    auto myFieldzRef           = myFieldz.template unchecked<3>();
-    auto myGridxRef            = myGridx.template unchecked<1>();
-    auto myGridyRef            = myGridy.template unchecked<1>();
-    auto myGridzRef            = myGridz.template unchecked<1>();
-    auto PosxRef               = Posx.template mutable_unchecked<1>();
-    auto PosyRef               = Posy.template mutable_unchecked<1>();
-    auto PoszRef               = Posz.template mutable_unchecked<1>();
 
-    // Interpolate field values at the current position
-    auto interpFieldx          = py::array_t<T> (Npoints);
-    auto interpFieldy          = py::array_t<T> (Npoints);
-    auto interpFieldz          = py::array_t<T> (Npoints);
-
-    auto interpFieldxRef       = interpFieldx.template mutable_unchecked<1>();
-    auto interpFieldyRef       = interpFieldy.template mutable_unchecked<1>();
-    auto interpFieldzRef       = interpFieldz.template mutable_unchecked<1>();
-
-    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldx, interpFieldx, coordinateSystem);
-    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldy, interpFieldy, coordinateSystem);
-    interpolate::InterpolateField(Posx, Posy, Posz, indicesx, indicesy, indicesz,
-                     myGridx, myGridy, myGridz, myFieldz, interpFieldz, coordinateSystem);
+    timers.BeginTimer("Interpolation");
+    auto interpolated_field     = InterpolateField(points, field, grid, indices, should_terminate, grid_coord_system);
+    auto interpolated_fieldRef  = interpolated_field.template unchecked<2>();
+    timers.EndTimer("Interpolation");
 
     // Estimate the first step size along the streamline
-    auto dx                    = myGridxRef(1) - myGridxRef(0);
-    auto dy                    = myGridyRef(1) - myGridyRef(0);
-    auto dz                    = myGridzRef(1) - myGridzRef(0);
-    auto step_size             = std::min({dx, dy, dz});
-    // Take a step along the streamline
-    #pragma omp parallel for schedule(dynamic)
-    for (std::size_t i=0; i<Npoints; i++)
-    {
-        if (should_terminate[i])
-        {   continue;   }
-            auto norm        = sqrt(interpFieldxRef(i)*interpFieldxRef(i)
-                                + interpFieldyRef(i)*interpFieldyRef(i)
-                                + interpFieldzRef(i)*interpFieldzRef(i));
+    auto gridx1                 = std::get<0>(grid);
+    auto gridx2                 = std::get<1>(grid);
+    auto gridx3                 = std::get<2>(grid);
+    auto gridx1Ref              = std::get<0>(grid).template unchecked<1>();
+    auto gridx2Ref              = std::get<1>(grid).template unchecked<1>();
+    auto gridx3Ref              = std::get<2>(grid).template unchecked<1>();
+    const auto dx1              = gridx1Ref(1) - gridx1Ref(0);
+    const auto dx2              = gridx2Ref(1) - gridx2Ref(0);
+    const auto dx3              = gridx3Ref(1) - gridx3Ref(0);
+    T uniform_step_size;
 
-            PosxRef(i) += interpFieldxRef(i) * step_size / norm;
-            PosyRef(i) += interpFieldyRef(i) * step_size / norm;
-            PoszRef(i) += interpFieldzRef(i) * step_size / norm;
-    }
-    if (isUniform)
+    auto pointsRef             = points.template mutable_unchecked<2>();
+    auto indicesRef            = indices.template unchecked<2>();
+    const auto Npoints         = points.shape(1);
+    
+    if (use_adaptive_stepsize)
     {
-        ReturnClosestIndexUniform(Posx, indicesx, myGridx);
-        ReturnClosestIndexUniform(Posy, indicesy, myGridy);
-        ReturnClosestIndexUniform(Posz, indicesz, myGridz);
+        timers.BeginTimer("Adaptive Stepsize");
+        auto step_size             = compute_adaptive_stepsize(indices, field, grid, 
+                                    grid_coord_system, should_terminate);
+        auto step_sizeRef          = step_size.template unchecked<1>();
+        timers.EndTimer("Adaptive Stepsize");
+    
+        timers.BeginTimer("Integration");
+        #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
+        for (std::size_t i=0; i<Npoints; i++)
+        {
+            if (should_terminate[i])
+            {   continue;   }
+                auto norm        = sqrt(square(interpolated_fieldRef(0,i)) +
+                                    square(interpolated_fieldRef(1,i)) +
+                                    square(interpolated_fieldRef(2,i)));
+                pointsRef(0,i) += interpolated_fieldRef(0,i) * step_sizeRef(i) / norm;
+                pointsRef(1,i) += interpolated_fieldRef(1,i) * step_sizeRef(i) / norm;
+                pointsRef(2,i) += interpolated_fieldRef(2,i) * step_sizeRef(i) / norm;
+
+        }
+        timers.EndTimer("Integration");
     }
     else
     {
-        ReturnClosestIndexMonotonic(Posx, indicesx, myGridx);
-        ReturnClosestIndexMonotonic(Posy, indicesy, myGridy);
-        ReturnClosestIndexMonotonic(Posz, indicesz, myGridz);
+        timers.BeginTimer("Integration");
+        #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
+        for (std::size_t i=0; i<Npoints; i++)
+        {
+            if (should_terminate[i])
+            {   continue;   }
+            auto norm        = sqrt(square(interpolated_fieldRef(0,i)) +
+                                square(interpolated_fieldRef(1,i)) +
+                                square(interpolated_fieldRef(2,i)));
+            auto ix1         = indicesRef(0,i);
+            auto ix2         = indicesRef(1,i);
+            auto ix3         = indicesRef(2,i);
+            if (ix1 == gridx1.shape(0) - 1 || ix2 == gridx2.shape(0) - 1 || ix3 == gridx3.shape(0) - 1)
+            {
+                uniform_step_size = dx1 * CFL;
+            }
+            else
+            {
+                uniform_step_size = (gridx1Ref(ix1+1) - gridx1Ref(ix1)) * CFL;
+            }
+            pointsRef(0,i) += interpolated_fieldRef(0,i) * uniform_step_size / norm;
+            pointsRef(1,i) += interpolated_fieldRef(1,i) * uniform_step_size / norm;
+            pointsRef(2,i) += interpolated_fieldRef(2,i) * uniform_step_size / norm;
+            if (grid_coord_system == "spherical")
+            {
+                if (pointsRef(0,i) < inner_termination_radius)
+                {   should_terminate[i] = true;    }
+            }
+            else if (grid_coord_system == "log_spherical")
+            {
+                if (exp(pointsRef(0,i)) < inner_termination_radius)
+                {   should_terminate[i] = true;    }
+            }
+            else if (grid_coord_system == "cartesian")
+            {
+                if (sqrt(square(pointsRef(0,i)) + square(pointsRef(1,i)
+                    + square(pointsRef(2,i)))) < inner_termination_radius)
+                {   should_terminate[i] = true;    }
+            }
+        }
+        timers.EndTimer("Integration");
     }
     return;
 }
@@ -96,133 +121,228 @@ void TakeStep(py::array_t<T> &myFieldx,
     Outputs: python arrays: final positions of the streamlines every N steps
 */
 template <typename T>
-py::array_t<T> IntegrateAllStreamlines(
-                                py::array_t<T> myFieldx, py::array_t<T> myFieldy, py::array_t<T> myFieldz,
-                                py::array_t<T> myGridx,  py::array_t<T> myGridy,  py::array_t<T> myGridz,
-                                py::array_t<T> Posx,     py::array_t<T> Posy,     py::array_t<T> Posz,
-                                const std::size_t Nsteps, const std::size_t Nout,
-                                const T xmin, const T xmax,
-                                const T ymin, const T ymax,
-                                const T zmin, const T zmax,
-                                const T theta_min, 
-                                const std::string &coordinateSystem)
+py::tuple IntegrateAllStreamlines( py::array_t<T> field,
+                                        std::string field_coord_system,
+                                        py::array_t<T> gridx1, 
+                                        py::array_t<T> gridx2,
+                                        py::array_t<T> gridx3,
+                                        std::string grid_coord_system,
+                                        py::array_t<T> points, 
+                                        std::string point_coord_system,
+                                        const bool use_adaptive_stepsize,
+                                        const std::size_t Nsteps, const std::size_t Nout)
 {
-    auto Npoints                = Posx.shape(0);
-    bool isMonotonic            = true;
-    bool isUniform              = true;
-    auto Nsteps_display         = Nsteps / 20;
-    auto DisplayObject          = DisplayTerminal<T>(Nsteps, "Integrating Streamlines", 
-                                                     Nsteps_display);
-    
+    auto display_every              = Nsteps / Ndisplay;
+    auto Ncheckpoint                = Nsteps / Nout;
+
+    Timers timers(Nsteps, display_every);
+    timers.AddTimer({"Indexing", "Initial Checks", "Output", "Interpolation",
+                     "Adaptive Stepsize", "Integration"});
+    bool isMonotonic                = true;
+    bool isUniform                  = true;
+    bool raise_out_of_bounds_error  = true;
+    bool end_integration            = false;
+    const auto Npoints              = points.shape(1);
+    auto grid                       = std::make_tuple(gridx1, gridx2, gridx3);
+    std::vector<bool> should_terminate(Npoints, false);
+    omp_set_dynamic(0);
+
+    std::cout << "Performing initial checks" << std::endl;
     // Initial Checks to make sure that the input dimensions are consistent
+    timers.BeginTimer("Initial Checks");
     {
-        auto Nx                    = myFieldx.shape(0);
-        auto Ny                    = myFieldx.shape(1);
-        auto Nz                    = myFieldx.shape(2);
-        bool shapeMatch             = true;
-        for (auto i=0; i<3; i++)
+        if (grid_coord_system != "cartesian" && grid_coord_system != "spherical" && 
+            grid_coord_system != "log_spherical")
         {
-            if (myFieldx.shape(i) != myFieldy.shape(i) || myFieldx.shape(i) != myFieldz.shape(i))
-            {   printf("Field shapes in direction %d do not match \n", i);
-                shapeMatch          = false;
-            }
+            throw std::invalid_argument(
+                "Invalid grid coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
         }
-        if (myGridx.shape(0) != Nx || myGridy.shape(0) != Ny || myGridz.shape(0) != Nz)
-        {   printf("Grid shapes do not match the field shapes \n");
-            shapeMatch              = false;
-        }
-        if (Posx.shape(0) != Posy.shape(0) || Posx.shape(0) != Posz.shape(0))
-        {   printf("Initial position shapes do not match \n");
-            shapeMatch              = false;
-        }
+        std::cout << "Grid coordinate system: " << grid_coord_system << std::endl;
 
-        if (!shapeMatch)
-        {   throw std::invalid_argument("Shapes do not match");}
+        if (point_coord_system != "cartesian" && point_coord_system != "spherical" && 
+            point_coord_system != "log_spherical")
+        {
+            throw std::invalid_argument(
+                "Invalid point coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
+        }
+        std::cout << "Point coordinate system: " << point_coord_system << std::endl;
 
+        if (field.shape(1) != gridx1.shape(0) || field.shape(2) != gridx2.shape(0) || 
+            field.shape(3) != gridx3.shape(0))
+        {   throw std::invalid_argument("Field and grid dimensions do not match");}
+        std::cout << "Field and grid dimensions match" << std::endl;
+
+        if (field.ndim() != 4)
+        {   throw std::invalid_argument("Field must shape: (3, Nx, Ny, Nz)");}
+        std::cout << "Field shape: (3, Nx, Ny, Nz)" << std::endl;
+
+        if (gridx1.ndim() != 1)
+        {   throw std::invalid_argument("Grid x1 must be 1D");}
+        std::cout << "Grid x1 is 1D" << std::endl;
+        if (gridx2.ndim() != 1)
+        {   throw std::invalid_argument("Grid x2 must be 1D");}
+        std::cout << "Grid x2 is 1D" << std::endl;
+        if (gridx3.ndim() != 1)
+        {   throw std::invalid_argument("Grid x3 must be 1D");}
+        std::cout << "Grid x3 is 1D" << std::endl;
+        if (points.ndim() != 2)
+        {   throw std::invalid_argument("Point array must have shape: (3, Npoints)");}
+        std::cout << "Point array shape: (3, Npoints)" << std::endl;
+        // Change the coordinate system of the points to that of the grid
+        if (point_coord_system != grid_coord_system)
+        {
+            auto new_points = ConvertCoordiantes(points, point_coord_system, grid_coord_system);
+            points = new_points;
+        }
+        std::cout << "Converted point coordinates to grid coordinate system" << std::endl;
+        // Check if the coordinates are within the bounds
+        {   CheckBounds(points, grid, should_terminate, raise_out_of_bounds_error);    }
+        std::cout << "Checked bounds" << std::endl;
         // Check if the grid is uniform and monotonic
-        std::tie(isMonotonic, isUniform) = CheckIfUniform(myGridx, myGridy, myGridz);
+        std::tie(isMonotonic, isUniform) = CheckIfUniform(grid);
         if (!isMonotonic)
         {   throw std::invalid_argument("Grid is not monotonic");}
 
         if (isUniform)
         {   std::cout << "Grid is uniform" << std::endl;}
         else
-        {   std::cout << "Grid is non-uniform but monotonic" << std::endl;}
-
-        if (coordinateSystem == "spherical")
-        {   
-            throw std::invalid_argument("Spherical coordinates not supported");
-        }
+        {   std::cout << "Grid is non-uniform but monotonic; interpolation will be slower" << std::endl;}
     }
+    timers.EndTimer("Initial Checks");
+    std::cout << "Initial checks complete" << std::endl;
 
-    // Convert the initial positions into cpp vectors of indices
-    std::vector <std::size_t> indicesx(Npoints), indicesy(Npoints), indicesz(Npoints);
 
+    // Indices of closest grid points to the initial positions
+    auto indices        = py::array_t<std::size_t> ({3, static_cast<int>(Npoints)});
+
+    timers.BeginTimer("Indexing");
     if (isUniform)
-    {
-        ReturnClosestIndexUniform(Posx, indicesx, myGridx);
-        ReturnClosestIndexUniform(Posy, indicesy, myGridy);
-        ReturnClosestIndexUniform(Posz, indicesz, myGridz);
-    }
+    {   ReturnClosestIndexUniform(points, indices, grid);   }
     else
-    {
-        ReturnClosestIndexMonotonic(Posx, indicesx, myGridx);
-        ReturnClosestIndexMonotonic(Posy, indicesy, myGridy);
-        ReturnClosestIndexMonotonic(Posz, indicesz, myGridz);
-    }
+    {   ReturnClosestIndexMonotonic(points, indices, grid); }
+    timers.EndTimer("Indexing");
 
-    // Pointers to grid
-    auto Posxref                = Posx.template mutable_unchecked<1>();
-    auto Posyref                = Posy.template mutable_unchecked<1>();
-    auto Poszref                = Posz.template mutable_unchecked<1>();
-    
-    // Create output array
+    // Container to store the indices of the grid points which the streamlines cross
+    Indices UniqueIndices = Indices(indices, gridx1.shape(0), gridx2.shape(0), gridx3.shape(0));
+
+
+    // Create output and termination arrays
     auto streamline_output = py::array_t<T> ({  3, static_cast<int>(Nout), 
-                                                   static_cast<int>(Npoints)});
-
+                                                static_cast<int>(Npoints)});
+    raise_out_of_bounds_error = false;
+    std::size_t iteration;
     // Populate the streamlines
-    std::vector<bool> should_terminate(Npoints, false);
-    auto Ncheckpoint            = Nsteps / Nout;
-    for (std::size_t i=0; i<Nsteps; i++)
+    for (iteration=0; iteration<Nsteps; iteration++)
     {
-        bool writeOutput = (i % Ncheckpoint == 0) ? true : false;
-
-        // Write to output array
+        if (end_integration)
+        {   break;  }
+        bool writeOutput        = (iteration % Ncheckpoint == 0) ? true : false;
         if (writeOutput)
         {
-            auto outindex       = i / Ncheckpoint;
-            auto out_ref   = streamline_output.mutable_unchecked();
+            timers.BeginTimer("Output");
+            auto outindex       = iteration / Ncheckpoint;
+            auto out_ref        = streamline_output.mutable_unchecked();
 
+            // Convert back to original coordinates
+            if (point_coord_system != grid_coord_system)
+            {
+                auto new_points = ConvertCoordiantes(points, grid_coord_system, point_coord_system);
+                points = new_points;
+            }
+            
+            auto pointsRef          = points.template unchecked<2>();
             for (std::size_t j=0; j<Npoints; j++)
             {
-                out_ref(0, outindex, j) = Posxref(j);
-                out_ref(1, outindex, j) = Posyref(j);
-                out_ref(2, outindex, j) = Poszref(j);
+                for (auto coord_id=0; coord_id < 3; coord_id++)
+                {   out_ref(coord_id, outindex, j) = pointsRef(coord_id, j);    }
             }
+
+            // Convert to grid coordinates again
+            if (point_coord_system != grid_coord_system)
+            {
+                auto new_points = ConvertCoordiantes(points, point_coord_system, grid_coord_system);
+                points = new_points;
+            }
+            timers.EndTimer("Output");
         }
 
-        TakeStep(   myFieldx, myFieldy, myFieldz, myGridx, myGridy, myGridz,
-                    indicesx, indicesy, indicesz, Posx, Posy, Posz, coordinateSystem, isUniform, 
-                    should_terminate);
-        TerminationCondition(   should_terminate, Posx, Posy, Posz, 
-                                indicesx, indicesy, indicesz,
-                                xmin, xmax, ymin, ymax, zmin, zmax);
-        DisplayObject.UpdateProgress(1);
-        DisplayObject.DisplayProgress();
-    }
-    return streamline_output;
-}
+        TakeStep(   points, field, grid, indices, should_terminate, grid_coord_system, 
+                    use_adaptive_stepsize, timers);
+        CheckBounds(points, grid, should_terminate, raise_out_of_bounds_error);
 
+        // Find new indices after taking the step
+        timers.BeginTimer("Indexing");
+        if (isUniform)
+        {   ReturnClosestIndexUniform(points, indices, grid);   }
+        else
+        {   ReturnClosestIndexMonotonic(points, indices, grid); }
+        timers.EndTimer("Indexing");
+
+        UniqueIndices.AddNewIndices(indices);
+
+        timers.PrintTimers(iteration);
+        end_integration = PercentTerminate(should_terminate) > terminate_fraction ? true : false;
+    }
+
+    // Additionally return the vector field transformed to cartesian coordinates, on a uniform cartesian grid
+    timers.BeginTimer("Output");
+    {
+        auto outindex       = iteration / Ncheckpoint;
+        auto out_ref        = streamline_output.mutable_unchecked();
+        // Convert back to original coordinates
+        if (point_coord_system != grid_coord_system)
+        {
+            auto new_points = ConvertCoordiantes(points, grid_coord_system, point_coord_system);
+            points = new_points;
+        }
+
+        auto pointsRef          = points.template unchecked<2>();
+        for (auto curindex = outindex; curindex < Nout; curindex++)
+        {
+            for (std::size_t j=0; j<Npoints; j++)
+            {
+                for (auto coord_id=0; coord_id < 3; coord_id++)
+                {   out_ref(coord_id, curindex, j) = pointsRef(coord_id, j);    }
+            }
+        }
+        // Convert to grid coordinates again
+        if (point_coord_system != grid_coord_system)
+        {
+            auto new_points = ConvertCoordiantes(points, point_coord_system, grid_coord_system);
+            points = new_points;
+        }
+    }
+
+    /*
+        Populate the last output with the last positions of the streamlines
+    */
+
+
+
+    auto CartesianizedOutput = ProjectFieldToCartesian(field, field_coord_system, grid, grid_coord_system, 
+                                                        UniqueIndices);
+                                                        
+    auto Fcartesian = std::get<0>(CartesianizedOutput);
+    auto x1d = std::get<1>(CartesianizedOutput);
+    auto y1d = std::get<2>(CartesianizedOutput);
+    auto z1d = std::get<3>(CartesianizedOutput);
+    auto xtraj = std::get<4>(CartesianizedOutput);
+    auto ytraj = std::get<5>(CartesianizedOutput);
+    auto ztraj = std::get<6>(CartesianizedOutput);
+    timers.EndTimer("Output");
+    timers.PrintTimers(Nsteps);
+    return py::make_tuple(streamline_output, Fcartesian, x1d, y1d, z1d, xtraj, ytraj, ztraj);
+}
 
 PYBIND11_MODULE(IntegrateStreamlines, m)
 {
     m.doc() = "Streamline tracer module";
     m.def("IntegrateStreamlines", &IntegrateAllStreamlines<float>);
     m.def("IntegrateStreamlines", &IntegrateAllStreamlines<double>);
-    py::arg("myFieldx"), py::arg("myFieldy"), py::arg("myFieldz"),
-    py::arg("myGridx"), py::arg("myGridy"), py::arg("myGridz"),
-    py::arg("Posx"), py::arg("Posy"), py::arg("Posz"),
+    py::arg("field"), py::arg("field_coord_system"),
+    py::arg("gridx1"), py::arg("gridx2"), py::arg("gridx3"),
+    py::arg("grid_coord_system"),
+    py::arg("points"), py::arg("point_coord_system"),
+    py::arg("use_adaptive_stepsize"),
     py::arg("Nsteps"), py::arg("Nout");
-    py::arg("xmin"), py::arg("xmax"), py::arg("ymin"), py::arg("ymax"), py::arg("zmin"), py::arg("zmax"),
-    py::arg("theta_min"), py::arg("coordinateSystem");
 }

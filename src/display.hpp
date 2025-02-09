@@ -7,10 +7,9 @@
 #ifndef DISPLAY_HPP_
     #define DISPLAY_HPP_
 
-    # include <iostream>
     # include <chrono>
     # include <thread>
-
+    # include "global.hpp"
     namespace colors
     {
         const std::string red = "\033[1;31m";
@@ -28,36 +27,30 @@
         Timer(const std::string& label) :   time_begin(std::chrono::high_resolution_clock::now()), 
                                             label(label), total_time_elapsed(0.), 
                                             time_since_checkpoint(0.) {}
-        void Reset()
-        {
-            time_begin = std::chrono::high_resolution_clock::now();
-            total_time_elapsed = 0.;
-            time_since_checkpoint = 0.;
-            return;
-        }
-        void Checkpoint()
-        {
-            auto current_time = std::chrono::high_resolution_clock::now();
-            time_since_checkpoint = std::chrono::duration_cast<std::chrono::duration<double>>(current_time - elapsed_checkpoint).count();
-            total_time_elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(current_time - time_begin).count();
-            elapsed_checkpoint = std::chrono::high_resolution_clock::now();
-            return;
-        }
         std::string GetLabel() const
         {
             return label;
         }
-        double GetTotalTimeElapsed() const
+        void Begin()
         {
-            return total_time_elapsed;
+            time_begin = std::chrono::high_resolution_clock::now();
+            return;
         }
-        double GetTimeSinceCheckpoint() const
+        void End()
         {
-            return time_since_checkpoint;
+            time_end = std::chrono::high_resolution_clock::now();
+            time_since_checkpoint = std::chrono::duration_cast<std::chrono::nanoseconds>(time_end - time_begin).count();
+            total_time_elapsed += time_since_checkpoint;
+            return;
+        }
+        void Reset()
+        {
+            time_since_checkpoint = 0.;
+            return;
         }
         std::string label;
         std::chrono::time_point<std::chrono::high_resolution_clock> time_begin;
-        decltype(std::chrono::high_resolution_clock::now()) elapsed_checkpoint;
+        decltype(std::chrono::high_resolution_clock::now()) time_end;
         double total_time_elapsed;
         double time_since_checkpoint;
 };
@@ -68,123 +61,91 @@
 class Timers
 {
     public:
-        Timers(std::size_t current_iteration,
-               std::size_t n_iterations) :
-               current_iteration(current_iteration),
-               n_iterations(n_iterations) {};
-        void AddTimer(const Timer& timer)
-        {
-            timers.push_back(timer);
-        }
-        void Checkpoint()
+        Timers(std::size_t n_iterations,
+               std::size_t display_every) :
+               n_iterations(n_iterations),
+               display_every (display_every) {};
+            
+        bool TimerExists(std::string label) const
         {
             for (auto& timer : timers)
             {
-                timer.Checkpoint();
+                if (timer.GetLabel() == label)
+                {   return true;}
+            }
+            return false;
+        }
+
+        void AddTimer(std::string label)
+        {   
+            if (!TimerExists(label))
+            {   timers.push_back(Timer(label)); }
+        }
+
+        void AddTimer(std::vector<std::string> labels)
+        {
+            for (auto& label : labels)
+            {   
+                if (!TimerExists(label))
+                {   timers.push_back(Timer(label)); }
             }
         }
 
-        void PrintTimers()
+        void BeginTimer(std::string label)
         {
+            for (auto& timer : timers)
+            {
+                if (timer.GetLabel() == label)
+                {   timer.Begin(); }
+            }
+        }
+
+        void EndTimer(std::string label)
+        {
+            for (auto& timer : timers)
+            {
+                if (timer.GetLabel() == label)
+                {   timer.End(); }
+            }
+        }
+
+        bool PrintTimers(std::size_t current_iteration)
+        {
+            if (current_iteration % display_every != 0)
+            {   return false;}
+
             double total = 0.;
+            double total_checkpoint = 0.;
             for (auto& timer : timers)
             {
                 total += timer.total_time_elapsed;
+                total_checkpoint += timer.time_since_checkpoint;
             }
+            std::cout << colors::red << "Iteration: " << colors::yellow << 
+            "[" << current_iteration << "/" << n_iterations << 
+            "]" << colors::reset << std::endl;
+
             for (auto& timer : timers)
             {
-                std::cout << colors::blue << timer.GetLabel() << colors::reset << " fraction: "
-                          << colors::green << 100*timer.total_time_elapsed/total << colors::reset << std::endl;
+                std::cout << colors::blue << timer.GetLabel() << colors::reset << 
+                "[% total]: " << colors::green << 100. * timer.total_time_elapsed / total << "% \t"
+                << colors::reset << "[time]: " << colors::yellow <<
+                timer.total_time_elapsed * 1.e-9 << " seconds" << std::endl;
+                timer.Reset();
             }
-            std::cout << colors::blue << "Total time elapsed: " << colors::reset << total << std::endl;
+            std::cout << colors::red << "Time elapsed: " << colors::green << total * 1.e-9 << " seconds" << colors::red;
+            std::cout << "\t \t Time left: " << colors::green << (total * (n_iterations - current_iteration) / current_iteration) * 1.e-9 
+            << " seconds" << colors::reset << std::endl;
+            std::cout << std::endl;
+            return true;
         }
-
 
     private:
         std::vector<Timer> timers;
-        std::size_t current_iteration;
         std::size_t n_iterations;
+        std::size_t display_every;
 };
 
-    template <typename T>
-    class DisplayTerminal
-    {   
-        public:
-            DisplayTerminal(T complete_progress,
-                            std::string taskName,
-                            T progress_threshold) : 
-                            current_progress(0),
-                            complete_progress(complete_progress),
-                            taskName(taskName),
-                            progress_threshold(progress_threshold),
-                            last_displayed_progress (0.),
-                            start_time(std::chrono::high_resolution_clock::now()) {};
-            DisplayTerminal(T complete_progress,
-                            std::string taskName): 
-                            current_progress(0),
-                            complete_progress(complete_progress),
-                            taskName(taskName),
-                            progress_threshold(complete_progress / 20.),
-                            last_displayed_progress (0.),
-                            start_time(std::chrono::high_resolution_clock::now()) {};
 
-            void UpdateProgress(T progress_increment);
-            void DisplayProgress();
-            ~DisplayTerminal() = default;
-        private:
-            T current_progress;
-            T complete_progress;
-            T progress_increment;
-            T progress_threshold;
-            T last_displayed_progress;
-            decltype(std::chrono::high_resolution_clock::now()) start_time;
-            std::string taskName;
-    };;
-
-    template <typename T>
-    void DisplayTerminal<T>::UpdateProgress(T progress_increment)
-    {
-        current_progress += progress_increment;
-        return;
-    }
-
-    /*
-        Display the progress on the terminal via *
-        An extra * is added every time the progress exceeds the threshold
-        <Task Name>: Expected finish time: %d seconds
-        ******************-------------------------- [N% Complete]
-                         ^ Current Progress        ^ Complete Progress
-    */
-    template <typename T>
-    void DisplayTerminal<T>::DisplayProgress()
-    {
-        if (current_progress - last_displayed_progress < progress_threshold)
-        {   return;}
-        auto current_time = std::chrono::high_resolution_clock::now();
-        auto elapsed_time = std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - start_time).count();
-        
-        // Print start time
-        auto expected_time = static_cast<float> ( 1.e-9 * elapsed_time * (complete_progress / current_progress));
-        auto time_remaining = expected_time - 1.e-9 * elapsed_time;
-
-        T progress = current_progress / complete_progress;
-        auto n_chars = complete_progress / progress_threshold;
-        auto n_chars_star = current_progress / progress_threshold;
-        auto n_chars_dash = n_chars - n_chars_star;
-        auto progress_percent = progress * 100;
-        std::cout << colors::blue << taskName << colors::reset << ": Expected time remaining: " << time_remaining << " seconds" << std::endl;
-        std::cout << colors::green << "Progress: " << colors::reset;
-        std::cout << "[";
-        std::cout << colors::yellow;
-        for (auto i=0; i<n_chars_star; i++)
-        {   std::cout << "*";   }
-        std::cout << colors::red;
-        for (auto i=0; i<n_chars_dash; i++)
-        {   std::cout << "-";   }
-        std::cout << colors::reset;
-        std::cout << "] \t (" << progress_percent << "% Complete)" << std::endl;
-        last_displayed_progress = current_progress;
-        return;
-    }
 
 #endif
