@@ -6,7 +6,7 @@ find_package(Python 3.7 COMPONENTS Interpreter Development REQUIRED)
 find_package(OpenMP REQUIRED)
 
 # Add the header files into a variable
-set(HEADERS grid.hpp interpolation.hpp display.hpp coordinates.hpp adaptive_stepsize.hpp indices.hpp)
+set(HEADERS grid.hpp interpolation.hpp display.hpp coordinates.hpp payloads.hpp)
 
 # Bind them using pybind
 pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp ${HEADERS})

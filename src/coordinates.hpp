@@ -119,17 +119,15 @@
     }
 
 
-    /*
-        Input array points has shape (3, Npoints)
-    */
+    // Convert points from coordinates 'from' to coordianates 'to'
     template <typename T>
-    py::array_t<T> ConvertCoordiantes(py::array_t<T> &points,
-                                      std::string from,
-                                      std::string to)
+    void ConvertCoordiantes(py::array_t<T> &points,
+                            std::string from,
+                            std::string to,
+                            py::array_t<T> &new_points)
     {
         auto pointsRef              = points.template mutable_unchecked<2>();
         const std::size_t Npoints   = points.shape(1);
-        auto new_points             = py::array_t<T>({3, static_cast<int>(Npoints)});
         if (from == "cartesian" && to == "spherical")
         {   CartesianToSphericalCoords(points, new_points);   }
         else if (from == "spherical" && to == "cartesian")
@@ -147,8 +145,7 @@
             throw std::invalid_argument(
                 "Invalid point coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
         }
-        return new_points;
+        return;
     }
-
 
 #endif /* COORDINATES_HPP_ */
