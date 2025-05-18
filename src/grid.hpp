@@ -25,6 +25,8 @@
         decltype(std::declval<py::array_t<T>>().template unchecked<1>()) gridx1Ref;
         decltype(std::declval<py::array_t<T>>().template unchecked<1>()) gridx2Ref;
         decltype(std::declval<py::array_t<T>>().template unchecked<1>()) gridx3Ref;
+
+
         T x1min, x1max, x2min, x2max, x3min, x3max;
         std::size_t nx1;
         std::size_t nx2;
@@ -99,13 +101,19 @@
                     indicesRef(0, i) = std::min(indicesRef(0, i), static_cast<std::size_t>(this->nx1 - 1));
                     indicesRef(1, i) = std::min(indicesRef(1, i), static_cast<std::size_t>(this->nx2 - 1));
                     indicesRef(2, i) = std::min(indicesRef(2, i), static_cast<std::size_t>(this->nx3 - 1));
-                    if (indicesRef(0, i) == this->nx1 - 1 || 
-                    indicesRef(1, i) == this->nx2 - 1 || 
-                    indicesRef(2, i) == this->nx3 - 1 ||
+                    if (grid_coord_system == "cartesian" && (indicesRef(0, i) >= this->nx1 - 1 || 
+                    indicesRef(1, i) >= this->nx2 - 2 || 
+                    indicesRef(2, i) >= this->nx3 - 2 ||
                     indicesRef(0, i) == 0 ||
                     indicesRef(1, i) == 0 ||
-                    indicesRef(2, i) == 0)
-                {   should_terminate[i] = true; }
+                    indicesRef(2, i) == 0))
+                    {   should_terminate[i] = true; }
+                    // Phi not  
+                    else if (indicesRef(0, i) >= this->nx1 - 2 || 
+                    indicesRef(1, i) >= this->nx2 - 2 || 
+                    indicesRef(0, i) == 0 ||
+                    indicesRef(1, i) == 0)
+                    {   should_terminate[i] = true; }
                 }
             }
             else
@@ -141,9 +149,9 @@
                     }
                     indicesRef(2, i) = left - 1;
                     // Check if the point is on the boundary
-                    if (indicesRef(0, i) == this->nx1 - 1 || 
-                    indicesRef(1, i) == this->nx2 - 1 || 
-                    indicesRef(2, i) == this->nx3 - 1 ||
+                    if (indicesRef(0, i) >= this->nx1 - 2 || 
+                    indicesRef(1, i) >= this->nx2 - 2 || 
+                    indicesRef(2, i) >= this->nx3 - 2 ||
                     indicesRef(0, i) == 0 ||
                     indicesRef(1, i) == 0 ||
                     indicesRef(2, i) == 0)
@@ -152,9 +160,6 @@
             }
             return;
         }
-
-        // Destructor
-        ~Grid() {}
     };
 
 #endif

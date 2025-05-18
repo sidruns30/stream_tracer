@@ -13,7 +13,7 @@
     
 
     template <typename T>
-    void SphericalToCartesianCoords(py::array_t<T> &points_spherical,
+    void SphericalToCartesianCoords(const py::array_t<T> &points_spherical,
                                     py::array_t<T> &points_cartesian)
     {
         auto points_sphericalRef    = points_spherical.template unchecked<2>();
@@ -31,7 +31,7 @@
     }
 
     template <typename T>
-    void CartesianToSphericalCoords(py::array_t<T> &points_cartesian,
+    void CartesianToSphericalCoords(const py::array_t<T> &points_cartesian,
                                     py::array_t<T> &points_spherical)
     {
         auto points_cartesianRef    = points_cartesian.template unchecked<2>();
@@ -44,12 +44,16 @@
                                         square(points_cartesianRef(2, i)));
             points_sphericalRef(1, i) = acos(points_cartesianRef(2, i) / points_sphericalRef(0, i));
             points_sphericalRef(2, i) = atan2(points_cartesianRef(1, i), points_cartesianRef(0, i));
+            if (points_sphericalRef(2, i) > phi_max)
+            {   points_sphericalRef(2, i) = phi_min + (points_sphericalRef(2, i) - phi_max);}
+            else if (points_sphericalRef(2, i) < phi_min)
+            {   points_sphericalRef(2, i) = phi_max + (points_sphericalRef(2, i) - phi_min);}
         }
         return;
     }
 
     template <typename T>
-    void SphericalToLogSphericalCoords(py::array_t<T> &points_spherical,
+    void SphericalToLogSphericalCoords(const py::array_t<T> &points_spherical,
                                     py::array_t<T> &points_log_spherical)
     {
         auto points_sphericalRef    = points_spherical.template unchecked<2>();
@@ -65,7 +69,7 @@
     }
 
     template <typename T>
-    void LogSphericalToSphericalCoords(py::array_t<T> &points_log_spherical,
+    void LogSphericalToSphericalCoords(const py::array_t<T> &points_log_spherical,
                                         py::array_t<T> &points_spherical)
     {
         auto points_log_sphericalRef    = points_log_spherical.template unchecked<2>();
@@ -81,7 +85,7 @@
     }
 
     template <typename T>
-    void CartesianToLogSphericalCoords( py::array_t<T> &points_cartesian,
+    void CartesianToLogSphericalCoords( const py::array_t<T> &points_cartesian,
                                         py::array_t<T> &points_log_spherical)
     {
         auto points_cartesianRef            = points_cartesian.template unchecked<2>();
@@ -95,13 +99,17 @@
             points_log_sphericalRef(0, i)   = log(r);
             points_log_sphericalRef(1, i)   = acos(points_cartesianRef(2, i) / r);
             points_log_sphericalRef(2, i)   = atan2(points_cartesianRef(1, i), points_cartesianRef(0, i));
+            if (points_log_sphericalRef(2, i) > phi_max)
+            {   points_log_sphericalRef(2, i) = phi_min + (points_log_sphericalRef(2, i) - phi_max);}
+            else if (points_log_sphericalRef(2, i) < phi_min)
+            {   points_log_sphericalRef(2, i) = phi_max + (points_log_sphericalRef(2, i) - phi_min);}
         }
         return;
     }
 
 
     template <typename T>
-    void LogSphericalToCartesianCoords(py::array_t<T> &points_log_spherical,
+    void LogSphericalToCartesianCoords(const py::array_t<T> &points_log_spherical,
                                         py::array_t<T> &points_cartesian)
     {
         auto points_log_sphericalRef    = points_log_spherical.template unchecked<2>();
@@ -118,16 +126,33 @@
         return;
     }
 
+    template <typename T>
+    void CopyArrays(const py::array_t<T> &from, py::array_t<T> &to)
+    {
+        auto fromRef    = from.template unchecked<2>();
+        auto toRef      = to.template mutable_unchecked<2>();
+        #pragma omp parallel for schedule(static) num_threads(number_of_threads)
+        for (std::size_t i=0; i<to.shape(1); i++)
+        {
+            for (std::size_t j=0; j<to.shape(0); j++)
+            {   toRef(j, i) = fromRef(j, i);    }
+        }
+        return;
+    }
+
 
     // Convert points from coordinates 'from' to coordianates 'to'
     template <typename T>
-    void ConvertCoordiantes(py::array_t<T> &points,
+    void ConvertCoordinates(const py::array_t<T> &points,
                             std::string from,
                             std::string to,
                             py::array_t<T> &new_points)
     {
-        auto pointsRef              = points.template mutable_unchecked<2>();
+        if (points.data() == new_points.data())
+        {   throw std::invalid_argument("Input and output arrays must be different");   }
         const std::size_t Npoints   = points.shape(1);
+        if (from == to)
+        {   CopyArrays(points, new_points);   return;}
         if (from == "cartesian" && to == "spherical")
         {   CartesianToSphericalCoords(points, new_points);   }
         else if (from == "spherical" && to == "cartesian")
@@ -142,6 +167,7 @@
         {   LogSphericalToCartesianCoords(points, new_points);   }
         else
         {
+            std::cout << "Coordinate transfomration requested from " << from << " to " << to << std::endl;
             throw std::invalid_argument(
                 "Invalid point coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
         }

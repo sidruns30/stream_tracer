@@ -14,7 +14,7 @@ pybind11_add_module(IntegrateStreamlines integrate_streamlines.cpp ${HEADERS})
 target_link_libraries(IntegrateStreamlines PRIVATE OpenMP::OpenMP_CXX)
 install(TARGETS IntegrateStreamlines DESTINATION .)
 
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -fopenmp -fPIC")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g -fsanitize=address -march=native -fopenmp -fPIC")
 
 #add_library(grid_lib grid.hpp)
 #add_library(field_lib fields.hpp)

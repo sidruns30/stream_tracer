@@ -8,6 +8,28 @@
 
 namespace py                = pybind11;
 
+/*
+    Function to copy initial data into local arrays
+*/
+template <typename T>
+py::tuple InitializeData(   const py::array_t<T> &field_input,
+                            const py::array_t<T> &gridx1_input, 
+                            const py::array_t<T> &gridx2_input,
+                            const py::array_t<T> &gridx3_input,
+                            const py::array_t<T> &points_input,
+                            const std::string &grid_coord_system,
+                            const std::string &point_coord_system)
+{
+    // Copy input arrays into new arrays
+    auto field_copy      = py::array_t<T>(field_input.request());
+    auto gridx1_copy     = py::array_t<T>(gridx1_input.request());
+    auto gridx2_copy     = py::array_t<T>(gridx2_input.request());
+    auto gridx3_copy     = py::array_t<T>(gridx3_input.request());
+    auto points_copy     = py::array_t<T>(points_input.request());
+    if (point_coord_system != grid_coord_system)
+    {   ConvertCoordinates(points_input, point_coord_system, grid_coord_system, points_copy); }
+    return py::make_tuple(field_copy, gridx1_copy, gridx2_copy, gridx3_copy, points_copy);
+}
 
 
 /*
@@ -15,7 +37,7 @@ namespace py                = pybind11;
 */
 template <typename T>
 float TakeStep( py::array_t<T> &points,
-                py::array_t<T> &field,
+                const py::array_t<T> &field,
                 Grid<T> &Grid,
                 py::array_t<std::size_t> &indices,
                 std::vector<bool> &should_terminate,
@@ -34,14 +56,14 @@ float TakeStep( py::array_t<T> &points,
     timers.EndTimer("Interpolation");
 
     timers.BeginTimer("Coordinate Transformation");
-    auto pointsRef              = points.template mutable_unchecked<2>();
-    auto indicesRef             = indices.template unchecked<2>();
+    auto pointsRef                  = points.template mutable_unchecked<2>();
+    auto indicesRef                 = indices.template unchecked<2>();
     auto current_quantity_valuesRef = current_quantity_values.mutable_unchecked();
-    const auto Npoints          = points.shape(1);
-    std::size_t count           = 0;
-    auto cart_points            = py::array_t<T>({3, static_cast<int>(Npoints)});
-    auto cart_pointsRef         = cart_points.template mutable_unchecked<2>();
-    ConvertCoordiantes(points, Grid.grid_coord_system, "cartesian", cart_points);
+    const auto Npoints              = points.shape(1);
+    std::size_t count               = 0;
+    auto cart_points                = py::array_t<T>({3, static_cast<int>(Npoints)});
+    auto cart_pointsRef             = cart_points.template mutable_unchecked<2>();
+    ConvertCoordinates(points, Grid.grid_coord_system, "cartesian", cart_points);
     timers.EndTimer("Coordinate Transformation");
 
     timers.BeginTimer("Integration");
@@ -56,11 +78,13 @@ float TakeStep( py::array_t<T> &points,
         auto ix1         = indicesRef(0,i);
         auto ix2         = indicesRef(1,i);
         auto ix3         = indicesRef(2,i);
-
         auto dx1         = Grid.gridx1Ref(ix1+1) - Grid.gridx1Ref(ix1);
         auto dx2         = Grid.gridx2Ref(ix2+1) - Grid.gridx2Ref(ix2);
-        auto dx3         = Grid.gridx3Ref(ix3+1) - Grid.gridx3Ref(ix3);
-
+        T dx3;
+        if (Grid.grid_coord_system != "cartesian" && ix3 == Grid.nx3 - 1)
+        {dx3         = Grid.gridx3Ref(ix3) - Grid.gridx3Ref(ix3-1);}
+        else
+        {   dx3         = Grid.gridx3Ref(ix3+1) - Grid.gridx3Ref(ix3);  }
         T stepsize;
         if (Grid.grid_coord_system == "cartesian")
         {   stepsize = sqrt(square(dx1) + square(dx2) + square(dx3));}
@@ -74,23 +98,24 @@ float TakeStep( py::array_t<T> &points,
             stepsize =  exp(Grid.gridx1Ref(ix1)) * sqrt(square(dx1) + square(dx2) +
                         square(sin(Grid.gridx2Ref(ix2))*dx3));
         }
+
+        if (sqrt(square(cart_pointsRef(0,i)) + 
+                 square(cart_pointsRef(1,i)) + 
+                 square(cart_pointsRef(2,i))) <= inner_termination_radius)
+        {should_terminate[i] = true;  }
+
         cart_pointsRef(0,i) += interpolated_fieldRef(0,i) * stepsize * CFL / norm;
         cart_pointsRef(1,i) += interpolated_fieldRef(1,i) * stepsize * CFL / norm;
         cart_pointsRef(2,i) += interpolated_fieldRef(2,i) * stepsize * CFL / norm;
 
         // Compute the user-defined quantity
-        current_quantity_valuesRef(i) = CustomUserOperation( ix1, ix2, ix3,
-                                                            pointsRef(0,i), pointsRef(1,i), pointsRef(2,i),
-                                                            dx1, dx2, dx3,
-                                                            interpolated_fieldRef(0,i), interpolated_fieldRef(1,i), interpolated_fieldRef(2,i),
-                                                            payload_names, payload_arrays);
+        current_quantity_valuesRef(i) = norm; 
     }
     timers.EndTimer("Integration");
 
     timers.BeginTimer("Coordinate Transformation");
-    ConvertCoordiantes(cart_points, "cartesian", Grid.grid_coord_system, points);
+    ConvertCoordinates(cart_points, "cartesian", Grid.grid_coord_system, points);
     timers.EndTimer("Coordinate Transformation");
-
     return count / Npoints;
 }
 
@@ -98,50 +123,59 @@ float TakeStep( py::array_t<T> &points,
     Main function to integrate the streamlines
     Inputs: python arrays: fields, field derivatives, grid1D, initial positions
     Outputs: python arrays: final positions of the streamlines every N steps
-
-
     payloads = (npayloads, {'name 1', ..., 'name npayload'}, {payload1, ..., payload npayload})
 */
 template <typename T>
-py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
-                                    py::array_t<T> gridx1, 
-                                    py::array_t<T> gridx2,
-                                    py::array_t<T> gridx3,
-                                    std::string grid_coord_system,
-                                    py::array_t<T> points, 
-                                    std::string point_coord_system,
+py::tuple IntegrateAllStreamlines(  const py::array_t<T> &field_input,
+                                    const py::array_t<T> &gridx1_input, 
+                                    const py::array_t<T> &gridx2_input,
+                                    const py::array_t<T> &gridx3_input,
+                                    const std::string &grid_coord_system,
+                                    py::array_t<T> &points_input, 
+                                    const std::string &point_coord_system,
                                     const std::size_t Nsteps, const std::size_t Nout,
-                                    py::tuple payloads)
+                                    const py::tuple &payloads)
 {
+    // Copy input into local arrays
+    py::tuple data                  = InitializeData(   field_input, gridx1_input, gridx2_input,
+                                                        gridx3_input, points_input, grid_coord_system,
+                                                        point_coord_system);
+    auto field                      = data[0].cast<py::array_t<T>>();
+    auto gridx1                     = data[1].cast<py::array_t<T>>();
+    auto gridx2                     = data[2].cast<py::array_t<T>>();
+    auto gridx3                     = data[3].cast<py::array_t<T>>();
+    auto points                     = data[4].cast<py::array_t<T>>();
+
     auto display_every              = Nsteps / Ndisplay;
-    auto Ncheckpoint                = Nsteps / Nout;
+    std::size_t Ncheckpoint         = Nsteps / Nout;
     Timers timers(Nsteps, display_every);
-    timers.AddTimer({"Indexing", "Initial Checks", "Output", "Interpolation", "Coordinate Transformation",
-                     "Integration"});
+    timers.AddTimer({"Indexing", "Initial Checks", "Output", "Interpolation",
+                     "Coordinate Transformation",   "Integration"});
     Grid Grid(gridx1, gridx2, gridx3, grid_coord_system);
     bool end_integration            = false;
     const auto Npoints              = points.shape(1);
     std::vector<bool> should_terminate(Npoints, false);
     omp_set_dynamic(0);
-
     std::size_t number_of_payloads;
     std::vector<std::string> payload_names;
     std::vector<py::array_t<T>> payload_arrays;
     std::cout << "Performing initial checks" << std::endl;
+    auto pointsRef                  = points.template unchecked<2>();
     // Initial Checks to make sure that the input dimensions are consistent
     timers.BeginTimer("Initial Checks");
     {
-        if (grid_coord_system != "cartesian" && grid_coord_system != "spherical" && 
-            grid_coord_system != "log_spherical")
+        if (grid_coord_system != "cartesian" && (grid_coord_system != "spherical" && 
+            grid_coord_system != "log_spherical"))
         {
             throw std::invalid_argument(
                 "Invalid grid coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
         }
         std::cout << "Grid coordinate system: " << grid_coord_system << std::endl;
 
-        if (point_coord_system != "cartesian" && point_coord_system != "spherical" && 
-            point_coord_system != "log_spherical")
+        if (point_coord_system != "cartesian" && (point_coord_system != "spherical" && 
+            point_coord_system != "log_spherical"))
         {
+            std::cout << "Point coord system is " << point_coord_system << std::endl;
             throw std::invalid_argument(
                 "Invalid point coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");
         }
@@ -168,11 +202,6 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
         if (points.ndim() != 2)
         {   throw std::invalid_argument("Point array must have shape: (3, Npoints)");}
         std::cout << "Point array shape: (3, Npoints)" << std::endl;
-        // Change the coordinate system of the points to that of the grid
-        if (point_coord_system != grid_coord_system)
-        {
-            ConvertCoordiantes(points, point_coord_system, grid_coord_system, points);
-        }
         std::cout << "Converted point coordinates to grid coordinate system" << std::endl;
         if (!Grid.isMonotonic)
         {   throw std::invalid_argument("Grid is not monotonic");}
@@ -180,8 +209,8 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
         if (Grid.isUniform)
         {   std::cout << "Grid is uniform" << std::endl;}
         else
-        {   std::cout << "Grid is non-uniform but monotonic; interpolation will be slower" << std::endl;}
-
+        {   std::cout << "Grid is non-uniform but monotonic; interpolation will be slower" << std::endl;}   
+        
         {
             number_of_payloads  = payloads[0].cast<std::size_t>();
             payload_names       = payloads[1].cast<std::vector<std::string>>();
@@ -202,7 +231,6 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
     }
     timers.EndTimer("Initial Checks");
     std::cout << "Initial checks complete" << std::endl;
-
 
     // Indices of closest grid points to the initial positions
     auto indices        = py::array_t<std::size_t> ({3, static_cast<int>(Npoints)});
@@ -229,30 +257,26 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
         if (writeOutput)
         {
             timers.BeginTimer("Output");
-            auto outindex       = iteration / Ncheckpoint;
+            std::size_t  outindex  = static_cast<std::size_t>((static_cast<double>(iteration) / Nsteps) * Nout);
             auto out_ref        = streamline_output.mutable_unchecked();
             auto aux_ref        = auxilliary_output.mutable_unchecked();
             auto current_ref    = current_quantity_values.unchecked();
 
-            // Convert back to original coordinates
-            if (point_coord_system != grid_coord_system)
-            {   ConvertCoordiantes(points, grid_coord_system, point_coord_system, points);}
-            
             auto pointsRef          = points.template unchecked<2>();
             for (std::size_t j=0; j<Npoints; j++)
-            {
+            {    
                 aux_ref(outindex, j) = current_ref(j);
                 for (auto coord_id=0; coord_id < 3; coord_id++)
                 {   out_ref(coord_id, outindex, j) = pointsRef(coord_id, j);    }
-            }
-
-            // Convert to grid coordinates again
-            if (point_coord_system != grid_coord_system)
-            {
-                ConvertCoordiantes(points, point_coord_system, grid_coord_system, points);
+                
             }
             timers.EndTimer("Output");
         }
+
+        // Find new indices after taking the step
+        timers.BeginTimer("Indexing");
+        Grid.ReturnClosestIndex(points, indices, should_terminate);
+        timers.EndTimer("Indexing");
 
         auto percent_termiante = TakeStep(  points, field, Grid, indices, should_terminate, 
                                             current_quantity_values, payload_names,
@@ -270,14 +294,10 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
     // Additionally return the vector field transformed to cartesian coordinates, on a uniform cartesian grid
     timers.BeginTimer("Output");
     {
-        auto outindex       = iteration / Ncheckpoint;
+        std::size_t  outindex  = static_cast<std::size_t>((static_cast<double>(iteration) / Nsteps) * Nout);
         auto out_ref        = streamline_output.mutable_unchecked();
         auto aux_ref        = auxilliary_output.mutable_unchecked();
         auto current_ref    = current_quantity_values.unchecked();
-        // Convert back to original coordinates
-        if (point_coord_system != grid_coord_system)
-        {   ConvertCoordiantes(points, grid_coord_system, point_coord_system, points); }
-
         auto pointsRef          = points.template unchecked<2>();
         for (auto curindex = outindex; curindex < Nout; curindex++)
         {
@@ -288,21 +308,10 @@ py::tuple IntegrateAllStreamlines(  py::array_t<T> field,
                 {   out_ref(coord_id, curindex, j) = pointsRef(coord_id, j);    }
             }
         }
-        // Convert to grid coordinates again
-        if (point_coord_system != grid_coord_system)
-        {   ConvertCoordiantes(points, point_coord_system, grid_coord_system, points);}
     }
     timers.EndTimer("Output");
-    std::cout << "Integration complete" << std::endl;
     timers.PrintTimers(Nsteps);
-
-    // Clear all memory
-    {
-        payload_names.clear();
-        payload_arrays.clear();
-        should_terminate.clear();
-    }
-
+    std::cout << "Integration complete" << std::endl;
     return py::make_tuple(streamline_output, auxilliary_output);
 }
 

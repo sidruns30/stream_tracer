@@ -3,7 +3,7 @@
     *
     * Code to interpolate a field at a given position given the 
     * field values at the grid points
-    * Interpolation supports a uniform grid with cartesian coordiantes
+    * Interpolation supports a uniform grid with cartesian Coordinates
 */
 #ifndef INTERPOLATION_HPP_
     #define INTERPOLATION_HPP_
@@ -48,7 +48,7 @@
     // Interpolate field defined at Grid at points
     template <typename T>
     py::array_t<T> InterpolateField(py::array_t<T> &points,
-                                    py::array_t<T> &field,
+                                    const py::array_t<T> &field,
                                     Grid<T> &grid,
                                     py::array_t<std::size_t> &indices,
                                     std::vector<bool> &should_terminate)
@@ -69,37 +69,52 @@
         else if (grid.grid_coord_system == "log_spherical")
         {   ComputeDistance = static_cast<T(*)(T, T, T, T, T, T)>(ComputeDistancesLogSpherical); }
 
+        const auto nx1 = field.shape(0);
+        const auto nx2 = field.shape(1);
+        const auto nx3 = field.shape(2);
+
         #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
         for (std::size_t i=0; i<Npoints; i++)
         {
             if (should_terminate[i])
             {   continue;   }
+            
+            // Store the indices of the grid points
+            auto ix1_low = indicesRef(0, i);
+            auto ix2_low = indicesRef(1, i);
+            auto ix3_low = indicesRef(2, i);
+            auto ix1_high = ix1_low + 1;
+            auto ix2_high = ix2_low + 1;
+            auto ix3_high = ix3_low + 1;
+
+            if (grid.grid_coord_system != "cartesian" && ix3_low == grid.nx3 - 1)
+            {   ix3_high = 0;}
 
             // Compute the distance between the point and the grid points
             T d111 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)), grid.gridx2Ref(indicesRef(1, i)), 
-                                        grid.gridx3Ref(indicesRef(2, i)));
+                                        grid.gridx1Ref(ix1_low), grid.gridx2Ref(ix2_low), 
+                                        grid.gridx3Ref(ix3_low));
             T d112 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)), grid.gridx2Ref(indicesRef(1, i)), 
-                                        grid.gridx3Ref(indicesRef(2, i)+1));
+                                        grid.gridx1Ref(ix1_low), grid.gridx2Ref(ix2_low), 
+                                        grid.gridx3Ref(ix3_high));
             T d121 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)), grid.gridx2Ref(indicesRef(1, i)+1), 
-                                        grid.gridx3Ref(indicesRef(2, i)));
+                                        grid.gridx1Ref(ix1_low), grid.gridx2Ref(ix2_high), 
+                                        grid.gridx3Ref(ix3_low));
             T d122 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)), grid.gridx2Ref(indicesRef(1, i)+1), 
-                                        grid.gridx3Ref(indicesRef(2, i)+1));
+                                        grid.gridx1Ref(ix1_low), grid.gridx2Ref(ix2_high), 
+                                        grid.gridx3Ref(ix3_high));
             T d211 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)+1), grid.gridx2Ref(indicesRef(1, i)), 
-                                        grid.gridx3Ref(indicesRef(2, i)));
+                                        grid.gridx1Ref(ix1_high), grid.gridx2Ref(ix2_low), 
+                                        grid.gridx3Ref(ix3_low));
             T d212 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)+1), grid.gridx2Ref(indicesRef(1, i)), 
-                                        grid.gridx3Ref(indicesRef(2, i)+1));
+                                        grid.gridx1Ref(ix1_high), grid.gridx2Ref(ix2_low), 
+                                        grid.gridx3Ref(ix3_high));
             T d221 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)+1), grid.gridx2Ref(indicesRef(1, i)+1), 
-                                        grid.gridx3Ref(indicesRef(2, i)));
+                                        grid.gridx1Ref(ix1_high), grid.gridx2Ref(ix2_high), 
+                                        grid.gridx3Ref(ix3_low));
             T d222 = ComputeDistance(pointsRef(0, i), pointsRef(1, i), pointsRef(2, i),
-                                        grid.gridx1Ref(indicesRef(0, i)+1), grid.gridx2Ref(indicesRef(1, i)+1), 
-                                        grid.gridx3Ref(indicesRef(2, i)+1));
+                                        grid.gridx1Ref(ix1_high), grid.gridx2Ref(ix2_high), 
+                                        grid.gridx3Ref(ix3_high));
 
             //if (d111 == 0) {throw std::runtime_error("Distance is zero");}
             if (d111 == 0 || std::isnan(d111)) {   d111 = softening_length; }
@@ -113,14 +128,14 @@
 
             for (auto coord_id=0; coord_id<3; coord_id++)
             {
-                auto F111 = fieldRef(coord_id, indicesRef(0, i), indicesRef(1, i), indicesRef(2, i));
-                auto F112 = fieldRef(coord_id, indicesRef(0, i), indicesRef(1, i), indicesRef(2, i)+1);
-                auto F121 = fieldRef(coord_id, indicesRef(0, i), indicesRef(1, i)+1, indicesRef(2, i));
-                auto F122 = fieldRef(coord_id, indicesRef(0, i), indicesRef(1, i)+1, indicesRef(2, i)+1);
-                auto F211 = fieldRef(coord_id, indicesRef(0, i)+1, indicesRef(1, i), indicesRef(2, i));
-                auto F212 = fieldRef(coord_id, indicesRef(0, i)+1, indicesRef(1, i), indicesRef(2, i)+1);
-                auto F221 = fieldRef(coord_id, indicesRef(0, i)+1, indicesRef(1, i)+1, indicesRef(2, i));
-                auto F222 = fieldRef(coord_id, indicesRef(0, i)+1, indicesRef(1, i)+1, indicesRef(2, i)+1);
+                auto F111 = fieldRef(coord_id, ix1_low, ix2_low, ix3_low);
+                auto F112 = fieldRef(coord_id, ix1_low, ix2_low, ix3_high);
+                auto F121 = fieldRef(coord_id, ix1_low, ix2_high, ix3_low);
+                auto F122 = fieldRef(coord_id, ix1_low, ix2_high, ix3_high);
+                auto F211 = fieldRef(coord_id, ix1_high, ix2_low, ix3_low);
+                auto F212 = fieldRef(coord_id, ix1_high, ix2_low, ix3_high);
+                auto F221 = fieldRef(coord_id, ix1_high, ix2_high, ix3_low);
+                auto F222 = fieldRef(coord_id, ix1_high, ix2_high, ix3_high);
                 // Interpolated field weighted by inverse distances
                 interpolated_fieldRef(coord_id, i) =  (F111/d111 + F112/d112 + F121/d121 + F122/d122 + F211/d211 + F212/d212 + F221/d221 +
                                                     F222/d222) / (1/d111 + 1/d112 + 1/d121 + 1/d122 + 1/d211 + 1/d212 + 1/d221 + 1/d222 );
@@ -128,6 +143,11 @@
                 if (std::isnan(interpolated_fieldRef(coord_id, i)))
                 {
                     std::cout << "Nan encountered in the field" << std::endl;
+                    std::cout << "i: " << i << std::endl;
+                    std::cout << "ix1_low: " << ix1_low << " ix2_low: " << ix2_low << " ix3_low: " << ix3_low << std::endl;
+                    std::cout << "ix1_high: " << ix1_high << " ix2_high: " << ix2_high << " ix3_high: " << ix3_high << std::endl;
+                    std::cout << "x1: " << pointsRef(0, i) << " x2: " << pointsRef(1, i) << " x3: " << pointsRef(2, i) << std::endl;
+                    std::cout << "grid x1: " << grid.gridx1Ref(ix1_low) << " grid x2: " << grid.gridx2Ref(ix2_low) << " grid x3: " << grid.gridx3Ref(ix3_low) << std::endl;
                     std::cout << "F111: " << F111 << " F112: " << F112 << " F121: " << F121 << " F122: " << F122 << std::endl;
                     std::cout << "F211: " << F211 << " F212: " << F212 << " F221: " << F221 << " F222: " << F222 << std::endl;
                     std::cout << "d111: " << d111 << " d112: " << d112 << " d121: " << d121 << " d122: " << d122 << std::endl;
