@@ -161,4 +161,84 @@
 
 
 
+    // Interpolate field at a given point
+    template <typename T>
+    void InterpolateFieldAtPoint(  const py::array_t<T> &field,
+                                const Grid<T> &grid,
+                                std::function<T(T, T, T, T, T, T)> ComputeDistance,
+                                T x1, T x2, T x3,
+                                const std::size_t ix1, const std::size_t ix2, 
+                                const std::size_t ix3, T &interp_fieldx,
+                                T &interp_fieldy, T &interp_fieldz)
+    {
+        auto fieldRef = field.template unchecked<4>();
+        auto gridx1Ref = grid.gridx1Ref;
+        auto gridx2Ref = grid.gridx2Ref;
+        auto gridx3Ref = grid.gridx3Ref;
+
+        // Compute the distance between the point and the grid points
+        T d111 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1), gridx2Ref(ix2), 
+                                gridx3Ref(ix3));
+        T d112 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1), gridx2Ref(ix2), 
+                                gridx3Ref(ix3+1));
+        T d121 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1), gridx2Ref(ix2+1), 
+                                gridx3Ref(ix3));
+        T d122 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1), gridx2Ref(ix2+1), 
+                                gridx3Ref(ix3+1));
+        T d211 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1+1), gridx2Ref(ix2), 
+                                gridx3Ref(ix3));
+        T d212 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1+1), gridx2Ref(ix2), 
+                                gridx3Ref(ix3+1));
+        T d221 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1+1), gridx2Ref(ix2+1), 
+                                gridx3Ref(ix3));
+        T d222 = ComputeDistance(x1, x2, x3,
+                                gridx1Ref(ix1+1), gridx2Ref(ix2+1), 
+                                gridx3Ref(ix3+1));
+        if (d111 == 0 || std::isnan(d111)) {   d111 = softening_length; }
+        if (d112 == 0 || std::isnan(d112)) {   d112 = softening_length; }
+        if (d121 == 0 || std::isnan(d121)) {   d121 = softening_length; }
+        if (d122 == 0 || std::isnan(d122)) {   d122 = softening_length; }
+        if (d211 == 0 || std::isnan(d211)) {   d211 = softening_length; }
+        if (d212 == 0 || std::isnan(d212)) {   d212 = softening_length; }
+        if (d221 == 0 || std::isnan(d221)) {   d221 = softening_length; }
+        if (d222 == 0 || std::isnan(d222)) {   d222 = softening_length; }
+        // Interpolate the field at the point
+        interp_fieldx =  (fieldRef(0, ix1, ix2, ix3)/d111 + fieldRef(0, ix1, ix2, ix3+1)/d112 + 
+                                fieldRef(0, ix1, ix2+1, ix3)/d121 + fieldRef(0, ix1, ix2+1, ix3+1)/d122 +
+                                fieldRef(0, ix1+1, ix2, ix3)/d211 + fieldRef(0, ix1+1, ix2, ix3+1)/d212 +
+                                fieldRef(0, ix1+1, ix2+1, ix3)/d221 + fieldRef(0, ix1+1, ix2+1, ix3+1)/d222) / 
+                                (1/d111 + 1/d112 + 1/d121 + 1/d122 + 1/d211 + 1/d212 + 1/d221 + 1/d222 );
+        interp_fieldy =  (fieldRef(1, ix1, ix2, ix3)/d111 + fieldRef(1, ix1, ix2, ix3+1)/d112 +
+                                fieldRef(1, ix1, ix2+1, ix3)/d121 + fieldRef(1, ix1, ix2+1, ix3+1)/d122 +
+                                fieldRef(1, ix1+1, ix2, ix3)/d211 + fieldRef(1, ix1+1, ix2, ix3+1)/d212 +
+                                fieldRef(1, ix1+1, ix2+1, ix3)/d221 + fieldRef(1, ix1+1, ix2+1, ix3+1)/d222) / 
+                                (1/d111 + 1/d112 + 1/d121 + 1/d122 + 1/d211 + 1/d212 + 1/d221 + 1/d222 );
+        interp_fieldz =  (fieldRef(2, ix1, ix2, ix3)/d111 + fieldRef(2, ix1, ix2, ix3+1)/d112 +
+                                fieldRef(2, ix1, ix2+1, ix3)/d121 + fieldRef(2, ix1, ix2+1, ix3+1)/d122 +
+                                fieldRef(2, ix1+1, ix2, ix3)/d211 + fieldRef(2, ix1+1, ix2, ix3+1)/d212 +
+                                fieldRef(2, ix1+1, ix2+1, ix3)/d221 + fieldRef(2, ix1+1, ix2+1, ix3+1)/d222) / 
+                                (1/d111 + 1/d112 + 1/d121 + 1/d122 + 1/d211 + 1/d212 + 1/d221 + 1/d222 );
+        if (std::isnan(interp_fieldx) || std::isnan(interp_fieldy) || std::isnan(interp_fieldz))
+        {
+            std::cout << "Nan encountered in the field" << std::endl;
+            std::cout << "x1: " << x1 << " x2: " << x2 << " x3: " << x3 << std::endl;
+            std::cout << "grid x1: " << gridx1Ref(ix1) << " grid x2: " << gridx2Ref(ix2) << " grid x3: " << gridx3Ref(ix3) << std::endl;
+            std::cout << "F111: " << fieldRef(0, ix1, ix2, ix3) << " F112: " << fieldRef(0, ix1, ix2, ix3+1) 
+                      << " F121: " << fieldRef(0, ix1, ix2+1, ix3) << " F122: " << fieldRef(0, ix1, ix2+1, ix3+1) << std::endl;
+            std::cout << "F211: " << fieldRef(0, ix1+1, ix2, ix3) << " F212: " << fieldRef(0, ix1+1, ix2, ix3+1) 
+                      << " F221: " << fieldRef(0, ix1+1, ix2+1, ix3) << " F222: " << fieldRef(0, ix1+1, ix2+1, ix3+1)  << std::endl;
+            std::cout << "d111: " << d111  << " d112: "  << d112  << " d121: "  << d121  << " d122: "  << d122  << std::endl;
+            std::cout << "d211: "  << d211  << " d212: "  << d212  << " d221: "  << d221  << " d222: "  << d222  << std::endl;
+            throw std::runtime_error("Nan encountered in the field");
+        }
+        return;
+    }
+
 #endif

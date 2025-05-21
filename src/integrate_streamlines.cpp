@@ -34,6 +34,10 @@ py::tuple InitializeData(   const py::array_t<T> &field_input,
 
 /*
     Function to integrate along a streamline for a single step
+
+    // To do:
+    - Add index calculation inside the loop
+    - Package interpolation inside
 */
 template <typename T>
 float TakeStep( py::array_t<T> &points,
@@ -82,7 +86,7 @@ float TakeStep( py::array_t<T> &points,
         auto dx2         = Grid.gridx2Ref(ix2+1) - Grid.gridx2Ref(ix2);
         T dx3;
         if (Grid.grid_coord_system != "cartesian" && ix3 == Grid.nx3 - 1)
-        {dx3         = Grid.gridx3Ref(ix3) - Grid.gridx3Ref(ix3-1);}
+        {dx3            = Grid.gridx3Ref(ix3) - Grid.gridx3Ref(ix3-1);}
         else
         {   dx3         = Grid.gridx3Ref(ix3+1) - Grid.gridx3Ref(ix3);  }
         T stepsize;
@@ -118,6 +122,131 @@ float TakeStep( py::array_t<T> &points,
     timers.EndTimer("Coordinate Transformation");
     return count / Npoints;
 }
+
+/*
+    Function to integrate along a streamline for a single step
+
+    // To do:
+    - Add index calculation inside the loop
+    - Package interpolation inside
+*/
+template <typename T>
+float TakeStepEuler( py::array_t<T> &points,
+                    const py::array_t<T> &field,
+                    Grid<T> &Grid,
+                    std::vector<bool> &should_terminate,
+                    py::array_t<T> &current_quantity_values,
+                    std::vector<std::string> &payload_names,
+                    std::vector<py::array_t<T>> &payload_arrays,
+                    Timers &timers)
+{
+    auto pointsRef                  = points.template mutable_unchecked<2>();
+    auto current_quantity_valuesRef = current_quantity_values.mutable_unchecked();
+
+
+    // Distance function based on the grid coordinate system
+    std::function<T(T, T, T, T, T, T)> ComputeDistance;
+    if (Grid.grid_coord_system == "cartesian")
+    {   ComputeDistance = static_cast<T(*)(T, T, T, T, T, T)>(ComputeDistanceCartesian); }
+    else if (Grid.grid_coord_system == "spherical")
+    {   ComputeDistance = static_cast<T(*)(T, T, T, T, T, T)>(ComputeDistanceSpherical); }
+    else if (Grid.grid_coord_system == "log_spherical")
+    {   ComputeDistance = static_cast<T(*)(T, T, T, T, T, T)>(ComputeDistancesLogSpherical); }
+
+    // Similarly generate the coordinate transformation functions
+    std::function<void(T &fromx1, T &fromx2, T &fromx3,
+                       T &tox1, T &tox2, T &tox3)> TransformToCartesian;
+    if (Grid.grid_coord_system == "cartesian")
+    {  TransformToCartesian = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(CopyPoint); }
+    else if (Grid.grid_coord_system == "spherical")
+    {   TransformToCartesian = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(SphericalToCartesianPoint); }
+    else if (Grid.grid_coord_system == "log_spherical")
+    {   TransformToCartesian = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(LogSphericalToCartesianPoint); }
+
+    std::function<void(T &fromx1, T &fromx2, T &fromx3,
+                       T &tox1, T &tox2, T &tox3)> TransformToGrid;
+    if (Grid.grid_coord_system == "cartesian")
+    {   TransformToGrid = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(CopyPoint); }
+    else if (Grid.grid_coord_system == "spherical")
+    {   TransformToGrid = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(CartesianToSphericalPoint); }
+    else if (Grid.grid_coord_system == "log_spherical")
+    {   TransformToGrid = static_cast<void(*)(T&, T&, T&, T&, T&, T&)>(CartesianToLogSphericalPoint); }
+
+
+    #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
+    for (std::size_t streamline_id=0; streamline_id < points.shape(1); streamline_id++)
+    {
+        if (should_terminate[streamline_id]){   continue;   }
+        // Compute the index of the closet grid point
+        std::size_t ix1, ix2, ix3;
+        timers.BeginTimer("Indexing");
+        should_terminate[streamline_id] = Grid.ReturnClosestIndexUniformGrid( pointsRef(0, streamline_id),
+                                                                    pointsRef(1, streamline_id),
+                                                                    pointsRef(2, streamline_id),
+                                                                    ix1, ix2, ix3);
+        timers.EndTimer("Indexing");
+
+        // Interpolate the field at the point
+        timers.BeginTimer("Interpolation");
+        T fieldx, fieldy, fieldz;
+        InterpolateFieldAtPoint( field,
+                                Grid,
+                                ComputeDistance,
+                                pointsRef(0, streamline_id),
+                                pointsRef(1, streamline_id),
+                                pointsRef(2, streamline_id),
+                                ix1, ix2, ix3, fieldx, fieldy, fieldz);
+        timers.EndTimer("Interpolation");
+
+        auto norm                   = sqrt(square(fieldx) +
+                                            square(fieldy) +
+                                            square(fieldz));
+        auto stepsize               = Grid.dx1 * CFL;
+
+        timers.BeginTimer("Coordinate Transformation");
+        T point_cartx, point_carty, point_cartz;
+        TransformToCartesian( pointsRef(0, streamline_id),
+                                pointsRef(1, streamline_id),
+                                pointsRef(2, streamline_id),
+                                point_cartx,
+                                point_carty,
+                                point_cartz);
+        point_cartx += fieldx * stepsize / norm;
+        point_carty += fieldy * stepsize / norm;
+        point_cartz += fieldz * stepsize / norm;
+        if (sqrt(square(point_cartx) + 
+                 square(point_carty) + 
+                 square(point_cartz)) <= inner_termination_radius)
+        {   should_terminate[streamline_id] = true;  
+        TransformToGrid( point_cartx,
+                            point_carty,
+                            point_cartz,
+                            pointsRef(0, streamline_id),
+                            pointsRef(1, streamline_id),
+                            pointsRef(2, streamline_id));
+        timers.EndTimer("Coordinate Transformation");
+        // Compute user defined payload operation
+        timers.BeginTimer("Payload");
+        current_quantity_valuesRef(streamline_id) = CustomUserOperation(  ix1, ix2, ix3,
+                                                    pointsRef(0, streamline_id),
+                                                    pointsRef(1, streamline_id),
+                                                    pointsRef(2, streamline_id),
+                                                    Grid.dx1, Grid.dx2, Grid.dx3,
+                                                    fieldx,
+                                                    fieldy,
+                                                    fieldz,
+                                                    payload_names,
+                                                    payload_arrays);
+        timers.EndTimer("Payload");
+
+
+
+    }
+
+
+}
+
+
 
 /*
     Main function to integrate the streamlines
