@@ -10,7 +10,7 @@
     # include <chrono>
     # include <thread>
     # include "global.hpp"
-    namespace colors
+    namespace Colors
     {
         const std::string red = "\033[1;31m";
         const std::string green = "\033[1;32m";
@@ -121,23 +121,30 @@ class Timers
                 total += timer.total_time_elapsed;
                 total_checkpoint += timer.time_since_checkpoint;
             }
-            std::cout << colors::red << "Iteration: " << colors::yellow << 
+            std::cout << Colors::red << "Iteration: " << Colors::yellow << 
             "[" << current_iteration << "/" << n_iterations << 
-            "]" << colors::reset << std::endl;
+            "]" << Colors::reset << std::endl;
 
             for (auto& timer : timers)
             {
-                std::cout << colors::blue << timer.GetLabel() << colors::reset << 
-                "[% total]: " << colors::green << 100. * timer.total_time_elapsed / total << "% \t"
-                << colors::reset << "[time]: " << colors::yellow <<
+                std::cout << Colors::blue << timer.GetLabel() << Colors::reset << 
+                "[% total]: " << Colors::green << 100. * timer.total_time_elapsed / total << "% \t"
+                << Colors::reset << "[time]: " << Colors::yellow <<
                 timer.total_time_elapsed * 1.e-9 << " seconds" << std::endl;
                 timer.Reset();
             }
-            std::cout << colors::red << "Time elapsed: " << colors::green << total * 1.e-9 << " seconds" << colors::red;
-            std::cout << "\t \t Time left: " << colors::green << (total * (n_iterations - current_iteration) / current_iteration) * 1.e-9 
-            << " seconds" << colors::reset << std::endl;
+            std::cout << Colors::red << "Time elapsed: " << Colors::green << total * 1.e-9 << " seconds" << Colors::red;
+            std::cout << "\t \t Time left: " << Colors::green << (total * (n_iterations - current_iteration) / current_iteration) * 1.e-9 
+            << " seconds" << Colors::reset << std::endl;
             std::cout << std::endl;
             return true;
+        }
+
+        void PrintString(std::string str, std::size_t current_iteration)
+        {
+            if (current_iteration % display_every == 0)
+            {   std::cout << Colors::red << str << Colors::reset << std::endl;}
+            return;
         }
 
     private:

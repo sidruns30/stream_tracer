@@ -4,17 +4,6 @@
     // streamtracer headers
     #include "global.hpp"
 
-    // Function to copy a py::array_t into another array
-    template <typename T>
-    void CopyOneDArray(py::array_t<T> &from, py::array_t<T> &to)
-    {
-        std::size_t Npoints = from.shape(0);
-        #pragma omp parallel for num_threads(number_of_threads)
-        for (std::size_t i=0; i<Npoints; i++)
-        { to[i] = from[i];}
-        return;
-    }
-
     // Placeholder for the grid
     template <typename T>
     struct Grid
@@ -89,92 +78,6 @@
                 "Invalid grid coordinate system. Must be 'cartesian', 'spherical' or 'log_spherical'");}
         }
 
-        // Get indices of points closest to grid points and flag points on the grid boundary
-        void ReturnClosestIndex(    py::array_t<T> &points, 
-                                    py::array_t<std::size_t> &indices_of_points,
-                                    std::vector<bool> &should_terminate)
-        {
-            auto indicesRef             = indices_of_points.template mutable_unchecked<2>();
-            auto pointsRef              = points.template unchecked<2>();
-            const auto Npoints          = points.shape(1);
-            if (isUniform)
-            {
-                const auto dx1              = this->gridx1Ref(1) - this->gridx1Ref(0);
-                const auto dx2              = this->gridx2Ref(1) - this->gridx2Ref(0);
-                const auto dx3              = this->gridx3Ref(1) - this->gridx3Ref(0);
-                #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
-                for (std::size_t i=0; i<Npoints; i++)
-                {
-                    if (should_terminate[i]){   continue;   }
-                    indicesRef(0, i) = static_cast<std::size_t>((pointsRef(0, i) - this->gridx1Ref(0)) / dx1);
-                    indicesRef(1, i) = static_cast<std::size_t>((pointsRef(1, i) - this->gridx2Ref(0)) / dx2);
-                    indicesRef(2, i) = static_cast<std::size_t>((pointsRef(2, i) - this->gridx3Ref(0)) / dx3);
-                    indicesRef(0, i) = std::max(indicesRef(0, i), static_cast<std::size_t>(0));
-                    indicesRef(1, i) = std::max(indicesRef(1, i), static_cast<std::size_t>(0));
-                    indicesRef(2, i) = std::max(indicesRef(2, i), static_cast<std::size_t>(0));
-                    indicesRef(0, i) = std::min(indicesRef(0, i), static_cast<std::size_t>(this->nx1 - 2));
-                    indicesRef(1, i) = std::min(indicesRef(1, i), static_cast<std::size_t>(this->nx2 - 2));
-                    indicesRef(2, i) = std::min(indicesRef(2, i), static_cast<std::size_t>(this->nx3 - 2));
-                    if (grid_coord_system == "cartesian" && (indicesRef(0, i) >= this->nx1 - 2 || 
-                    indicesRef(1, i) >= this->nx2 - 2 || 
-                    indicesRef(2, i) >= this->nx3 - 2 ||
-                    indicesRef(0, i) == 0 ||
-                    indicesRef(1, i) == 0 ||
-                    indicesRef(2, i) == 0))
-                    {   should_terminate[i] = true; }
-                    // Phi not  
-                    else if (indicesRef(0, i) >= this->nx1 - 2 || 
-                    indicesRef(1, i) >= this->nx2 - 2 || 
-                    indicesRef(0, i) == 0 ||
-                    indicesRef(1, i) == 0)
-                    {   should_terminate[i] = true; }
-                }
-            }
-            else
-            {
-                #pragma omp parallel for schedule(dynamic) num_threads(number_of_threads)
-                for (std::size_t i=0; i<Npoints; i++)
-                {
-                    if (should_terminate[i]){   continue;   }
-                    std::size_t left = 0, right = gridx1.shape(0) - 1;
-                    while (left < right)
-                    {
-                        std::size_t mid = left + (right - left) / 2;
-                        if (gridx1Ref(mid) <= pointsRef(0, i)) {   left = mid + 1; }
-                        else {   right = mid;    }
-                    }
-                    indicesRef(0, i) = left - 1;
-                    left = 0;
-                    right = gridx2.shape(0) - 1;
-                    while (left < right)
-                    {
-                        std::size_t mid = left + (right - left) / 2;
-                        if (gridx2Ref(mid) <= pointsRef(1, i)){   left = mid + 1; }
-                        else {   right = mid;    }
-                    }
-                    indicesRef(1, i) = left - 1;
-                    left = 0;
-                    right = gridx3.shape(0) - 1;
-                    while (left < right)
-                    {
-                        std::size_t mid = left + (right - left) / 2;
-                        if (gridx3Ref(mid) <= pointsRef(2, i)) {   left = mid + 1; }
-                        else {   right = mid;    }
-                    }
-                    indicesRef(2, i) = left - 1;
-                    // Check if the point is on the boundary
-                    if (indicesRef(0, i) >= this->nx1 - 2 || 
-                    indicesRef(1, i) >= this->nx2 - 2 || 
-                    indicesRef(2, i) >= this->nx3 - 2 ||
-                    indicesRef(0, i) == 0 ||
-                    indicesRef(1, i) == 0 ||
-                    indicesRef(2, i) == 0)
-                {   should_terminate[i] = true; }
-                }
-            }
-            return;
-        }
-
         // Return the closest index of a single point (bool -> should terminate)
         bool ReturnClosestIndexUniformGrid(    T pointx1, T pointx2, T pointx3, 
                                     std::size_t &index_x1, std::size_t &index_x2,
@@ -184,6 +87,12 @@
             index_x1 = static_cast<std::size_t>((pointx1 - this->x1min) / this->dx1);
             index_x2 = static_cast<std::size_t>((pointx2 - this->x2min) / this->dx2);
             index_x3 = static_cast<std::size_t>((pointx3 - this->x3min) / this->dx3);
+            index_x1 = std::max(index_x1, static_cast<std::size_t>(0));
+            index_x2 = std::max(index_x2, static_cast<std::size_t>(0));
+            index_x3 = std::max(index_x3, static_cast<std::size_t>(0));
+            index_x1 = std::min(index_x1, static_cast<std::size_t>(this->nx1 - 2));
+            index_x2 = std::min(index_x2, static_cast<std::size_t>(this->nx2 - 2));
+            index_x3 = std::min(index_x3, static_cast<std::size_t>(this->nx3 - 2));
             if (grid_coord_system == "cartesian" && (index_x1 >= this->nx1 - 2 ||
             index_x2 >= this->nx2 - 2 ||
             index_x3 >= this->nx3 - 2 ||
@@ -197,48 +106,6 @@
             index_x2 == 0)
             {   should_terminate = true; }
             return should_terminate;
-        }
-
-        // Warning: this function is not tested yet
-        bool ReturnClosestIndexNonUniformGrid(   T pointx1, T pointx2, T pointx3, 
-                                    std::size_t &index_x1, std::size_t &index_x2,
-                                    std::size_t &index_x3)
-        {
-            bool should_terminate = false;
-            std::size_t left = 0, right = gridx1.shape(0) - 1;
-            while (left < right)
-            {
-                std::size_t mid = left + (right - left) / 2;
-                if (gridx1Ref(mid) <= pointx1) {   left = mid + 1; }
-                else {   right = mid;    }
-            }
-            index_x1 = left - 1;
-            left = 0;
-            right = gridx2.shape(0) - 1;
-            while (left < right)
-            {
-                std::size_t mid = left + (right - left) / 2;
-                if (gridx2Ref(mid) <= pointx2){   left = mid + 1; }
-                else {   right = mid;    }
-            }
-            index_x2 = left - 1;
-            left = 0;
-            right = gridx3.shape(0) - 1;
-            while (left < right)
-            {
-                std::size_t mid = left + (right - left) / 2;
-                if (gridx3Ref(mid) <= pointx3) {   left = mid + 1; }
-                else {   right = mid;    }
-            }
-            index_x3 = left - 1;
-            // Check if the point is on the boundary
-            if (index_x1 >= this->nx1 - 2 || 
-            index_x2 >= this->nx2 - 2 || 
-            index_x3 >= this->nx3 - 2 ||
-            index_x1 == 0 ||
-            index_x2 == 0 ||
-            index_x3 == 0)
-            {   should_terminate = true; }
         }
     };
 

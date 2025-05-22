@@ -7,13 +7,47 @@
     T CustomUserOperation(std::size_t ix1, std::size_t ix2, std::size_t ix3,
                             T x1, T x2, T x3, T dx1, T dx2, T dx3,
                             T Fx, T Fy, T Fz,
-                            std::vector<std::string> &payload_names,
-                            std::vector<py::array_t<T>> &payload_arrays)
+                            const std::string &grid_coord_system,
+                            const std::vector<std::string> &payload_names,
+                            const std::vector<py::array_t<T>> &payload_arrays)
         {
+            // Find indices of the payload arrays Ex, Ey, Ez
+            std::size_t Ex_index, Ey_index, Ez_index;
+            for (std::size_t i=0; i<payload_names.size(); i++)
+            {
+                if (payload_names[i] == "Ex")       {   Ex_index = i; }
+                else if (payload_names[i] == "Ey")  {   Ey_index = i; }
+                else if (payload_names[i] == "Ez")  {   Ez_index = i; }
+            }
+
+            // Compute the displacement vector in cartesian coordinates
+            T dx, dy, dz;
+            if (grid_coord_system == "cartesian")
+            { 
+                dx = dx1;
+                dy = dx2;
+                dz = dx3;
+            }
+            else if (grid_coord_system == "spherical")
+            {
+                dx = dx1 * sin(x2) * cos(x3);
+                dy = dx1 * sin(x2) * sin(x3);
+                dz = dx1 * cos(x2);
+            }
+            else if (grid_coord_system == "log_spherical")
+            {
+                dx = dx1 * exp(x2) * sin(x3) * cos(x4);
+                dy = dx1 * exp(x2) * sin(x3) * sin(x4);
+                dz = dx1 * exp(x2) * cos(x3);
+            }
+
+
+
+
             // Compute E dot B
-            auto Ex = payload_arrays[0].template unchecked<3>()(ix1, ix2, ix3);
-            auto Ey = payload_arrays[1].template unchecked<3>()(ix1, ix2, ix3);
-            auto Ez = payload_arrays[2].template unchecked<3>()(ix1, ix2, ix3);
+            auto Ex = payload_arrays[Ex_index].template unchecked<3>()(ix1, ix2, ix3);
+            auto Ey = payload_arrays[Ey_index].template unchecked<3>()(ix1, ix2, ix3);
+            auto Ez = payload_arrays[Ez_index].template unchecked<3>()(ix1, ix2, ix3);
 
             // Raise error if nan exists
             if (std::isnan(Ex) || std::isnan(Ey) || std::isnan(Ez) || 
